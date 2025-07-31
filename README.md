@@ -181,8 +181,3 @@ support for rounded rectangles. Joe Westcott added underline
 functionality and optimized image storage. Benoit KUGLER contributed
 support for rectangles with corners of unequal radius, modification
 times, and for file attachments and annotations.
-
-## Roadmap
-
-  - Remove all legacy code page font support; use UTF-8 exclusively
-  - Improve test coverage as reported by the coverage tool.
