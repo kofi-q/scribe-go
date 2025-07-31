@@ -1,0 +1,57 @@
+{
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit"
+  },
+  "emeraldwalk.runonsave": {
+    "commands": [
+        {
+            "match": "\\.(go)$",
+            "cmd": "go mod tidy"
+        }
+    ]
+},
+  "files.watcherExclude": {
+    "**/.git/**": true,
+    "**/coverage/**": true,
+  },
+  "search.exclude": {
+    "**/build": true,
+    "**/coverage": true
+  },
+  "typescript.workspaceSymbols.scope": "currentProject",
+  "go.toolsEnvVars": {},
+  "go.enableCodeLens": {
+    "runtest": false
+  },
+  "gopls": {
+    "ui.navigation.importShortcut": "Definition",
+    "formatting.gofumpt": true,
+    "formatting.local": "github.com/kofi-q/${workspaceFolderBasename}",
+    "ui.completion.usePlaceholders": false,
+    "ui.semanticTokens": true,
+    "ui.diagnostic.staticcheck": true,
+    "ui.diagnostic.analyses": {
+      "escape": true,
+      "shadow": false,
+      "ST1006": false,
+      "SA4004": false,
+      "QF1006": false,
+      "yield": true,
+      "slog": true
+    },
+    "ui.codelenses": {
+      "gc_details": true,
+      "regenerate_cgo": false,
+      "generate": false,
+      "test": false,
+      "tidy": false,
+      "upgrade_dependency": false,
+      "vendor": false
+    },
+  },
+  "go.useLanguageServer": true,
+  "go.buildOnSave": "off",
+  "go.lintOnSave": "file",
+  "go.vetOnSave": "off"
+}
