@@ -128,6 +128,8 @@ type Font struct {
 	GlyphCount  u16
 	MetricCount u16
 	WeightClass u16
+
+	LocaFormat u8
 }
 
 func (f *Font) GlyphId(char rune) u16 {
@@ -154,14 +156,14 @@ func Generate(
 	out []byte,
 ) (subset []byte, gidRemap []u16, err error) {
 	gen := Generator{
+		chars:    chars.AsSlice(make([]uint, chars.Count())),
 		font:     font,
-		gidRemap: make([]u16, font.GlyphCount),
 		glyphIds: []uint{},
 		reader:   NewReader(in),
 		writer:   NewWriter(out),
 	}
 
-	return gen.generate(chars)
+	return gen.generate()
 }
 
 type Generator struct {
@@ -184,11 +186,7 @@ func (g *Generator) copy(tableIn *Table, tableOut *Table) {
 	g.writer.seekTo(tableOut.Ptr + tableOut.LenPadded())
 }
 
-func (g *Generator) generate(chars *bitset.BitSet) (
-	out []byte,
-	gidRemap []u16,
-	err error,
-) {
+func (g *Generator) generate() (out []byte, gidRemap []u16, err error) {
 	if err = g.reader.parseIndex(); err != nil {
 		return
 	}
@@ -213,6 +211,7 @@ func (g *Generator) generate(chars *bitset.BitSet) (
 
 	lenIndex := 12 + u32(tableCount*16)
 	g.writer.ensureCapRemaining(u32(lenIndex +
+		// Tables with known length:
 		g.reader.Tables.Cvt.LenPadded() +
 		g.reader.Tables.Fpgm.LenPadded() +
 		g.reader.Tables.Gasp.LenPadded() +
@@ -238,7 +237,7 @@ func (g *Generator) generate(chars *bitset.BitSet) (
 	g.copy(&g.reader.Tables.Os2, &g.writer.Tables.Os2)
 	g.copy(&g.reader.Tables.Prep, &g.writer.Tables.Prep)
 
-	indexToLocFormat := g.genGlyfAndLoca(chars)
+	indexToLocFormat := g.genGlyfAndLoca()
 	g.genCmap()
 	g.genPost()
 	metricCount := g.genHmtx()
@@ -403,14 +402,11 @@ func (g *GlyfEntry) lenPadded() u32 {
 	return (g.len + 1) &^ 1
 }
 
-func (g *Generator) genGlyfAndLoca(chars *bitset.BitSet) u16 {
-	locaFormat := g.reader.indexToLocFormat()
-
+func (g *Generator) genGlyfAndLoca() u16 {
 	g.writer.Tables.Glyf.Ptr = g.writer.pos
 	g.writer.Tables.Glyf.Len = 0
 
-	glyphCountEstimate := chars.Count() + 1
-	g.chars = chars.AsSlice(make([]uint, glyphCountEstimate))
+	glyphCountEstimate := len(g.chars) + 1
 	glyfs := make([]GlyfEntry, 0, glyphCountEstimate)
 	var seenGids bitset.BitSet
 
@@ -429,7 +425,7 @@ func (g *Generator) genGlyfAndLoca(chars *bitset.BitSet) u16 {
 		gid := gidStack[0]
 		gidStack = gidStack[1:]
 
-		offset, len := g.reader.glyfLocation(u16(gid), locaFormat)
+		offset, len := g.reader.glyfLocation(u16(gid), g.font.LocaFormat)
 		ptr := g.reader.Tables.Glyf.Ptr + offset
 		g.reader.seekTo(ptr)
 		glyf := GlyfEntry{
@@ -488,6 +484,7 @@ func (g *Generator) genGlyfAndLoca(chars *bitset.BitSet) u16 {
 	}
 
 	g.glyphIds = seenGids.AsSlice(gidStack)
+	g.gidRemap = make([]u16, g.glyphIds[len(g.glyphIds)-1]+1)
 	for gidNew, gidOld := range g.glyphIds {
 		g.gidRemap[gidOld] = u16(gidNew)
 	}
@@ -559,7 +556,7 @@ func (g *Generator) genHmtx() (metricCount u16) {
 	var lastWidth u16
 	var i int
 
-	metricCountOrig := g.reader.metricCount()
+	metricCountOrig := g.font.MetricCount
 
 	for i, gid = range g.glyphIds {
 		g.reader.seekTo(g.reader.Tables.Hmtx.Ptr + u32(gid)*stride)
@@ -574,9 +571,10 @@ func (g *Generator) genHmtx() (metricCount u16) {
 	}
 
 	metricCount = u16(i + 1)
+	lastWidthGid := gid
 	ptrBearingsOrig := g.reader.Tables.Hmtx.Ptr + u32(metricCountOrig)*stride
 	for i, gid = range g.glyphIds[metricCount:] {
-		g.reader.seekTo(ptrBearingsOrig + u32(gid)*2)
+		g.reader.seekTo(ptrBearingsOrig + u32(gid-lastWidthGid)*2)
 
 		g.writer.u16(lastWidth)
 		g.writer.u16(g.reader.u16())
@@ -884,7 +882,9 @@ func (p *Parser) parseHead() error {
 		p.font.Flags |= FlagItalic
 	}
 
-	p.reader.skip(6)
+	p.reader.skip(4) // lowestRecPPEM, fontDirectionHint
+
+	p.font.LocaFormat = u8(p.reader.u16())
 
 	glyphDataFormat := p.reader.u16()
 	if glyphDataFormat != 0 {
@@ -1181,7 +1181,7 @@ func (r *Reader) fword() fword {
 	return fword(r.i16())
 }
 
-func (r *Reader) glyfLocation(gid u16, locaFormat u16) (offset u32, len u32) {
+func (r *Reader) glyfLocation(gid u16, locaFormat u8) (offset u32, len u32) {
 	if locaFormat == 0 {
 		r.seekTo(r.Tables.Loca.Ptr + u32(gid)*2)
 		offset = u32(r.u16()) * 2
@@ -1203,22 +1203,8 @@ func (r *Reader) i32() i32 {
 	return i32(r.u32())
 }
 
-func (r *Reader) i64() i64 {
-	return i64(r.u64())
-}
-
-func (r *Reader) indexToLocFormat() u16 {
-	r.seekTo(r.Tables.Head.Ptr + 50)
-	return r.u16()
-}
-
 func (r Reader) Len() u32 {
 	return u32(len(r.buf))
-}
-
-func (r *Reader) metricCount() u16 {
-	r.seekTo(r.Tables.Hhea.Ptr + 34)
-	return r.u16()
 }
 
 func (r *Reader) read(count u32) (bytes []byte) {
@@ -1240,17 +1226,8 @@ func (r *Reader) skip(count u32) {
 	r.pos += count
 }
 
-func (r *Reader) symbolCount() u16 {
-	r.seekTo(r.Tables.Maxp.Ptr + 4) // Skip version.
-	return r.u16()
-}
-
 func (r *Reader) tag() tag {
 	return tag(r.u32())
-}
-
-func (r *Reader) ufword() ufword {
-	return ufword(r.u16())
 }
 
 func (r *Reader) u16() u16 {
@@ -1259,10 +1236,6 @@ func (r *Reader) u16() u16 {
 
 func (r *Reader) u32() u32 {
 	return binary.BigEndian.Uint32(r.read(4))
-}
-
-func (r *Reader) u64() u64 {
-	return binary.BigEndian.Uint64(r.read(8))
 }
 
 type Writer struct {
@@ -1284,14 +1257,6 @@ func (w *Writer) ensureCapRemaining(byteCount u32) {
 	w.buf = slices.Grow(w.buf[:w.len], int(byteCount))
 }
 
-func (w *Writer) fixed(val fixed) {
-	w.u16(u16(val))
-}
-
-func (w *Writer) fword(val ufword) {
-	w.u16(u16(val))
-}
-
 func (w Writer) Len() u32 {
 	return u32(len(w.buf))
 }
@@ -1304,14 +1269,6 @@ func (w *Writer) seekTo(pos u32) {
 
 func (w *Writer) skip(count u32) {
 	w.seekTo(w.pos + count)
-}
-
-func (w *Writer) tag(val tag) {
-	w.u32(u32(val))
-}
-
-func (w *Writer) ufword(val ufword) {
-	w.u16(u16(val))
 }
 
 func (w *Writer) u16(val u16) {
@@ -1328,11 +1285,6 @@ func (w *Writer) u16Array(arr []u16) {
 func (w *Writer) u32(val u32) {
 	binary.BigEndian.PutUint32(w.buf[:w.pos+4][w.pos:], val)
 	w.skip(4)
-}
-
-func (w *Writer) u64(val u64) {
-	binary.BigEndian.PutUint64(w.buf[:w.pos+8][w.pos:], val)
-	w.skip(8)
 }
 
 func (w *Writer) write(src []byte) {

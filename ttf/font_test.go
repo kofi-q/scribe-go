@@ -67,9 +67,3 @@ func BenchmarkGenerate(b *testing.B) {
 		_ = subset
 	}
 }
-
-// func BenchmarkParseOld(b *testing.B) {
-// 	for b.Loop() {
-// 		scribe.ParseTtfFont(robotoI)
-// 	}
-// }
