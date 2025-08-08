@@ -471,11 +471,12 @@ type Scriber interface {
 	Close()
 	ClosePath()
 	CreateTemplateCustom(
+		id string,
 		corner PointType,
 		size PageSize,
 		fn func(*Tpl),
 	) Template
-	CreateTemplate(fn func(*Tpl)) Template
+	CreateTemplate(id string, fn func(*Tpl)) Template
 	CurveBezierCubicTo(cx0, cy0, cx1, cy1, x, y float32)
 	CurveBezierCubic(
 		x0, y0, cx0, cy0, cx1, cy1, x1, y1 float32,

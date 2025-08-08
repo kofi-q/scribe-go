@@ -29,8 +29,9 @@ import (
 )
 
 // CreateTemplate defines a new template using the current page size.
-func (f *Scribe) CreateTemplate(fn func(*Tpl)) Template {
+func (f *Scribe) CreateTemplate(id string, fn func(*Tpl)) Template {
 	return newTpl(
+		id,
 		PointType{0, 0},
 		f.curPageSize,
 		f.defOrientation,
@@ -43,11 +44,13 @@ func (f *Scribe) CreateTemplate(fn func(*Tpl)) Template {
 
 // CreateTemplateCustom starts a template, using the given bounds.
 func (f *Scribe) CreateTemplateCustom(
+	id string,
 	corner PointType,
 	size PageSize,
 	fn func(*Tpl),
 ) Template {
 	return newTpl(
+		id,
 		corner,
 		size,
 		f.defOrientation,
@@ -66,6 +69,7 @@ func (f *Scribe) CreateTemplateCustom(
 // document where this condition does not apply. CreateTpl() is a similar
 // function that lets you specify the orientation to avoid this problem.
 func CreateTemplate(
+	id string,
 	corner PointType,
 	size PageSize,
 	unitStr, fontDirStr string,
@@ -76,17 +80,27 @@ func CreateTemplate(
 		orientationStr = "l"
 	}
 
-	return CreateTpl(corner, size, orientationStr, unitStr, fontDirStr, fn)
+	return CreateTpl(id, corner, size, orientationStr, unitStr, fontDirStr, fn)
 }
 
 // CreateTpl creates a template not attached to any document
 func CreateTpl(
+	id string,
 	corner PointType,
 	size PageSize,
 	orientationStr, unitStr, fontDirStr string,
 	fn func(*Tpl),
 ) Template {
-	return newTpl(corner, size, orientationStr, unitStr, fontDirStr, fn, nil)
+	return newTpl(
+		id,
+		corner,
+		size,
+		orientationStr,
+		unitStr,
+		fontDirStr,
+		fn,
+		nil,
+	)
 }
 
 // UseTemplate adds a template to the current page or another template,
@@ -106,7 +120,11 @@ func (f *Scribe) Images() map[string]*ImageInfoType {
 
 // UseTemplateScaled adds a template to the current page or another template,
 // using the given page coordinates.
-func (f *Scribe) UseTemplateScaled(t Template, corner PointType, size PageSize) {
+func (f *Scribe) UseTemplateScaled(
+	t Template,
+	corner PointType,
+	size PageSize,
+) {
 	if t == nil {
 		f.SetErrorf("template is nil")
 		return
@@ -142,13 +160,18 @@ func (f *Scribe) UseTemplateScaled(t Template, corner PointType, size PageSize) 
 	}
 
 	fontsOrig := t.Fonts()
-	f.fonts = make([]fontDefType, len(fontsOrig))
 
-	for id, font := range t.Fonts() {
-		fontCopy := font
-		fontCopy.usedRunes = bitset.BitSet{}
+	// [FIXME] Move this into a dedicated font reuse feature instead of
+	// shoehorning here.
+	if len(fontsOrig) > 0 {
+		f.fonts = make([]fontDefType, len(fontsOrig))
 
-		f.fonts[id] = fontCopy
+		for id, font := range t.Fonts() {
+			fontCopy := font
+			fontCopy.usedRunes = bitset.BitSet{}
+
+			f.fonts[id] = fontCopy
+		}
 	}
 
 	// template data

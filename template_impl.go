@@ -23,7 +23,6 @@ package scribe
 
 import (
 	"bytes"
-	"crypto/sha1"
 	"encoding/gob"
 	"errors"
 	"fmt"
@@ -31,6 +30,7 @@ import (
 
 // newTpl creates a template, copying graphics settings from a template if one is given
 func newTpl(
+	id string,
 	corner PointType,
 	size PageSize,
 	orientationStr, unitStr, fontDirStr string,
@@ -59,13 +59,14 @@ func newTpl(
 	fonts := tpl.Scribe.fonts
 
 	template := FpdfTpl{
-		corner,
-		size,
-		bytes,
-		fonts,
-		images,
-		templates,
-		tpl.Scribe.page,
+		bytes:     bytes,
+		corner:    corner,
+		fonts:     fonts,
+		id:        id,
+		images:    images,
+		page:      tpl.Scribe.page,
+		size:      size,
+		templates: templates,
 	}
 	return &template
 }
@@ -77,13 +78,14 @@ type FpdfTpl struct {
 	bytes     [][]byte
 	fonts     []fontDefType
 	images    map[string]*ImageInfoType
+	id        string
 	templates []Template
 	page      int
 }
 
 // ID returns the global template identifier
 func (t *FpdfTpl) ID() string {
-	return fmt.Sprintf("%x", sha1.Sum(t.Bytes()))
+	return t.id
 }
 
 // Size gives the bounding dimensions of this template
