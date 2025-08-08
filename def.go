@@ -405,7 +405,7 @@ type InitType struct {
 	OrientationStr string
 	UnitStr        string
 	Size           PageSize
-	FontDirStr     string
+	FontSet        *FontSet
 }
 
 // FontLoader is used to read fonts (JSON font specification and zlib compressed font binaries)
@@ -700,10 +700,12 @@ type Scribe struct {
 	buffer fmtBuffer    // buffer holding in-memory PDF
 	layer  layerRecType // manages optional layers in document
 
-	attachments     []Attachment         // slice of content to embed globally
-	blendList       []blendModeType      // slice[idx] of alpha transparency modes, 1-based
-	dashArray       []float32            // dash array
-	diffs           []string             // array of encoding differences
+	attachments     []Attachment    // slice of content to embed globally
+	blendList       []blendModeType // slice[idx] of alpha transparency modes, 1-based
+	dashArray       []float32       // dash array
+	diffs           []string        // array of encoding differences
+	fontObjIds      []uint32
+	fonts           *FontSet
 	gradientList    []gradientType       // slice[idx] of gradient records
 	links           []intLinkType        // array of internal links
 	offsets         []uint32             // array of object offsets
@@ -712,6 +714,7 @@ type Scribe struct {
 	pageAttachments [][]annotationAttach // 1-based array of annotation for file attachments (per page)
 	pageLinks       [][]linkType         // pageLinks[page][link], both 1-based
 	pages           []*bytes.Buffer      // slice[page] of page content; 1-based
+	usedRunes       []bitset.BitSet      // Runes added to the document with this font.
 	xmp             []byte               // XMP metadata
 
 	defOrientation  string // default orientation
@@ -754,7 +757,6 @@ type Scribe struct {
 	defPageBoxes    map[string]PageBox           // default page size
 	pageSizes       map[int]PageSize             // used for pages with non default sizes or orientations
 	pageBoxes       map[int]map[string]PageBox   // used to define the crop, trim, bleed and art boxes
-	fonts           []fontDefType                // array of used fonts
 	images          map[string]*ImageInfoType    // array of used images
 	aliasMap        map[string]string            // map of alias->replacement
 	blendMap        map[string]int               // map into blendList
@@ -808,12 +810,14 @@ type Scribe struct {
 	colorFlag      bool // indicates whether fill and text colors are different
 }
 
-func (f *Scribe) font() *fontDefType {
-	if f.currentFont == 0 {
-		return nil
-	}
+type FontSet = ttf.FontSet
 
-	return &f.fonts[f.currentFont-1]
+func (f *Scribe) font() *ttf.FontInfo {
+	return f.fonts.Get(f.currentFont)
+}
+
+func (f *Scribe) currentFontKey() ttf.Key {
+	return f.fonts.Key(f.currentFont)
 }
 
 const (
@@ -846,32 +850,4 @@ type encListType [256]encType
 
 type fontBoxType struct {
 	Xmin, Ymin, Xmax, Ymax int
-}
-
-type fontDefType struct {
-	font ttf.Font
-
-	usedRunes bitset.BitSet // Runes added to the document with this font.
-
-	file  []byte
-	key   fontKey
-	objId uint32
-
-	isUtf8 bool
-}
-
-func (f *fontDefType) GlyphWidth(char rune) (gid uint16, width float32) {
-	gid = f.font.GlyphId(char)
-	width = f.font.Width(gid)
-
-	return
-}
-
-func (f *fontDefType) GlyphWidthOnly(char rune) float32 {
-	_, width := f.GlyphWidth(char)
-	return width
-}
-
-func (f *fontDefType) String() string {
-	return f.key.String()
 }

@@ -84,7 +84,7 @@ func (sc *ScratchPad) Text(lnHeight float32, text string) (lines []string) {
 	var ixAfterBreak int
 	var ixLine int
 	for ixChar, char = range text {
-		widthChar := uint16(sc.font.def.GlyphWidthOnly(char))
+		widthChar := uint16(sc.f.fonts.Get(sc.font.id).GlyphWidthOnly(char))
 		sc.widthCharsLine += widthChar
 
 		isSpace := unicode.IsSpace(char)

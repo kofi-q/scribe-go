@@ -31,7 +31,7 @@ func (f *Scribe) TextSplit(text string, width float32) (lines []string) {
 
 	var char rune
 	for ixChar, char = range text {
-		lenLine += int(font.def.GlyphWidthOnly(char))
+		lenLine += int(f.fonts.Get(font.id).GlyphWidthOnly(char))
 
 		isSpace := unicode.IsSpace(char)
 		if isSpace || isChinese(char) {
@@ -58,7 +58,7 @@ func (f *Scribe) TextSplit(text string, width float32) (lines []string) {
 
 			lenLine = 0
 			for _, char := range text[ixLineStart : ixChar+1] {
-				lenLine += int(font.def.GlyphWidthOnly(char))
+				lenLine += int(f.fonts.Get(font.id).GlyphWidthOnly(char))
 			}
 
 			ixBreak = -1

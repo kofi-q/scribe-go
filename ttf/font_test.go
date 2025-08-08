@@ -63,7 +63,7 @@ func BenchmarkGenerate(b *testing.B) {
 
 	for b.Loop() {
 		subset := []byte{}
-		subset, _, _ = Generate(notoSc, &font, &gidSet, subset)
+		subset, _, _ = Generate(&font, &gidSet, subset)
 		_ = subset
 	}
 }

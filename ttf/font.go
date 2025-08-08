@@ -110,6 +110,7 @@ type ufword u16
 type Font struct {
 	gids [256 * 256]u16
 
+	file   []byte
 	widths []f32
 
 	Bounds Bounds
@@ -150,7 +151,6 @@ type Bounds struct {
 }
 
 func Generate(
-	in []byte,
 	font *Font,
 	chars *bitset.BitSet,
 	out []byte,
@@ -159,7 +159,7 @@ func Generate(
 		chars:    chars.AsSlice(make([]uint, chars.Count())),
 		font:     font,
 		glyphIds: []uint{},
-		reader:   NewReader(in),
+		reader:   NewReader(font.file),
 		writer:   NewWriter(out),
 	}
 
@@ -714,6 +714,7 @@ func (g *Generator) genPost() {
 }
 
 func Parse(bytes []byte, font *Font) error {
+	font.file = bytes
 	parser := Parser{
 		font:   font,
 		reader: NewReader(bytes),

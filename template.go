@@ -23,9 +23,6 @@ package scribe
 
 import (
 	"encoding/gob"
-	"sort"
-
-	"github.com/bits-and-blooms/bitset"
 )
 
 // CreateTemplate defines a new template using the current page size.
@@ -36,7 +33,7 @@ func (f *Scribe) CreateTemplate(id string, fn func(*Tpl)) Template {
 		f.curPageSize,
 		f.defOrientation,
 		f.unitStr,
-		f.fontDirStr,
+		f.fonts,
 		fn,
 		f,
 	)
@@ -55,7 +52,7 @@ func (f *Scribe) CreateTemplateCustom(
 		size,
 		f.defOrientation,
 		f.unitStr,
-		f.fontDirStr,
+		f.fonts,
 		fn,
 		f,
 	)
@@ -72,7 +69,8 @@ func CreateTemplate(
 	id string,
 	corner PointType,
 	size PageSize,
-	unitStr, fontDirStr string,
+	unitStr string,
+	fontSet *FontSet,
 	fn func(*Tpl),
 ) Template {
 	orientationStr := "p"
@@ -80,7 +78,7 @@ func CreateTemplate(
 		orientationStr = "l"
 	}
 
-	return CreateTpl(id, corner, size, orientationStr, unitStr, fontDirStr, fn)
+	return CreateTpl(id, corner, size, orientationStr, unitStr, fontSet, fn)
 }
 
 // CreateTpl creates a template not attached to any document
@@ -88,7 +86,9 @@ func CreateTpl(
 	id string,
 	corner PointType,
 	size PageSize,
-	orientationStr, unitStr, fontDirStr string,
+	orientationStr string,
+	unitStr string,
+	fontSet *FontSet,
 	fn func(*Tpl),
 ) Template {
 	return newTpl(
@@ -97,7 +97,7 @@ func CreateTpl(
 		size,
 		orientationStr,
 		unitStr,
-		fontDirStr,
+		fontSet,
 		fn,
 		nil,
 	)
@@ -159,21 +159,6 @@ func (f *Scribe) UseTemplateScaled(
 		f.images[name] = &img
 	}
 
-	fontsOrig := t.Fonts()
-
-	// [FIXME] Move this into a dedicated font reuse feature instead of
-	// shoehorning here.
-	if len(fontsOrig) > 0 {
-		f.fonts = make([]fontDefType, len(fontsOrig))
-
-		for id, font := range t.Fonts() {
-			fontCopy := font
-			fontCopy.usedRunes = bitset.BitSet{}
-
-			f.fonts[id] = fontCopy
-		}
-	}
-
 	// template data
 	_, templateSize := t.Size()
 	scaleX := size.Wd / templateSize.Wd
@@ -190,7 +175,6 @@ type Template interface {
 	ID() string
 	Size() (PointType, PageSize)
 	Bytes() []byte
-	Fonts() []fontDefType
 	Images() map[string]*ImageInfoType
 	Templates() []Template
 	NumPages() int
@@ -201,31 +185,20 @@ type Template interface {
 	gob.GobEncoder
 }
 
-func (f *Scribe) templateFontCatalog(t Template) {
-	f.out("/Font <<")
+// func (f *Scribe) templateFontCatalog(t Template) {
+// 	f.out("/Font <<")
 
-	var fontsSorted []*fontDefType
-	fonts := t.Fonts()
-	for i := range fonts {
-		if fonts[i].usedRunes.Count() == 0 {
-			continue
-		}
+// 	fonts := t.Fonts()
+// 	for id := range fonts.Len() {
+// 		usedRunes := t.UsedRunes(ttf.Id(id))
+// 		if usedRunes.Count() == 0 {
+// 			continue
+// 		}
 
-		fontsSorted = append(fontsSorted, &fonts[i])
-	}
-	if f.catalogSort {
-		sort.Slice(fontsSorted, func(i, j int) bool {
-			return fontsSorted[i].key.family < fontsSorted[j].key.family ||
-				(fontsSorted[i].key.family == fontsSorted[j].key.family &&
-					fontsSorted[i].key.style < fontsSorted[j].key.style)
-		})
-	}
-
-	for _, font := range fontsSorted {
-		f.outf("/F%s %d 0 R", font.key, font.objId)
-	}
-	f.out(">>")
-}
+// 		f.outf("/F%s %d 0 R", fonts.Get(ttf.Id(id)).Key(), font.objId)
+// 	}
+// 	f.out(">>")
+// }
 
 // putTemplates writes the templates to the PDF
 func (f *Scribe) putTemplates() {
@@ -263,7 +236,7 @@ func (f *Scribe) putTemplates() {
 		f.out("/Resources ")
 		f.out("<</ProcSet [/PDF /Text /ImageB /ImageC /ImageI]")
 
-		f.templateFontCatalog(t)
+		// f.templateFontCatalog(t)
 
 		// tImages := t.Images()
 		// tTemplates := t.Templates()

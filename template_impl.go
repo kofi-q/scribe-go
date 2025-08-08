@@ -33,11 +33,13 @@ func newTpl(
 	id string,
 	corner PointType,
 	size PageSize,
-	orientationStr, unitStr, fontDirStr string,
+	orientationStr string,
+	unitStr string,
+	fontSet *FontSet,
 	fn func(*Tpl),
 	copyFrom *Scribe,
 ) Template {
-	doc := scribeNew(orientationStr, unitStr, size, fontDirStr)
+	doc := scribeNew(orientationStr, unitStr, size, fontSet)
 	tpl := Tpl{*doc}
 	if copyFrom != nil {
 		tpl.loadParamsFromFpdf(copyFrom)
@@ -56,12 +58,10 @@ func newTpl(
 		templates = append(templates, tpl.Scribe.templates[key])
 	}
 	images := tpl.Scribe.images
-	fonts := tpl.Scribe.fonts
 
 	template := FpdfTpl{
 		bytes:     bytes,
 		corner:    corner,
-		fonts:     fonts,
 		id:        id,
 		images:    images,
 		page:      tpl.Scribe.page,
@@ -76,7 +76,6 @@ type FpdfTpl struct {
 	corner    PointType
 	size      PageSize
 	bytes     [][]byte
-	fonts     []fontDefType
 	images    map[string]*ImageInfoType
 	id        string
 	templates []Template
@@ -140,10 +139,6 @@ func (t *FpdfTpl) FromPages() []Template {
 // Images returns a list of the images used in this template
 func (t *FpdfTpl) Images() map[string]*ImageInfoType {
 	return t.images
-}
-
-func (t *FpdfTpl) Fonts() []fontDefType {
-	return t.fonts
 }
 
 // Templates returns a list of templates used in this template

@@ -34,7 +34,7 @@ func (f *Scribe) coreFontReader(
 	family string,
 	style FontStyle,
 ) (r io.ReadCloser) {
-	key := fontKey{family: family, style: style}
+	key := fontKey{Family: family, Style: style}
 	emb, err := embFS.Open("font_embed/" + key.String() + ".json")
 	if err == nil {
 		r = emb

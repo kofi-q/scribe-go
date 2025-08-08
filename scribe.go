@@ -61,7 +61,11 @@ func init() {
 }
 
 type fmtBuffer struct {
-	bytes.Buffer
+	*bytes.Buffer
+}
+
+func newFmtBuffer(capacity uint32) fmtBuffer {
+	return fmtBuffer{bytes.NewBuffer(make([]byte, 0, capacity))}
 }
 
 func (b *fmtBuffer) printf(fmtStr string, args ...interface{}) {
@@ -69,7 +73,7 @@ func (b *fmtBuffer) printf(fmtStr string, args ...interface{}) {
 }
 
 func scribeNew(
-	orientationStr, unitStr string, size PageSize, fontDirStr string,
+	orientationStr, unitStr string, size PageSize, fontSet *FontSet,
 ) (f *Scribe) {
 	f = new(Scribe)
 	if orientationStr == "" {
@@ -80,9 +84,7 @@ func scribeNew(
 	if unitStr == "" {
 		unitStr = "mm"
 	}
-	if fontDirStr == "" {
-		fontDirStr = "."
-	}
+	f.buffer = newFmtBuffer(64 * 1024)
 	f.page = 0
 	f.n = 2
 	f.pages = make([]*bytes.Buffer, 0, 8)
@@ -115,14 +117,17 @@ func scribeNew(
 	f.inHeader = false
 	f.inFooter = false
 	f.lasth = 0
-	f.fontStyle = FontStyleNone
+	f.fontStyle = ttf.StyleNone
 	f.SetFontSize(12)
 	f.setDrawColor(0, 0, 0)
 	f.setFillColor(0, 0, 0)
 	f.setTextColor(0, 0, 0)
 	f.colorFlag = false
 	f.ws = 0
-	f.fontpath = fontDirStr
+	f.fonts = fontSet
+	f.fontObjIds = make([]uint32, f.fonts.Len())
+	f.usedRunes = make([]bitset.BitSet, f.fonts.Len())
+
 	// Scale factor
 	switch unitStr {
 	case "pt", "point":
@@ -216,7 +221,7 @@ func NewCustom(init *InitType) (f *Scribe) {
 		init.OrientationStr,
 		init.UnitStr,
 		init.Size,
-		init.FontDirStr,
+		init.FontSet,
 	)
 }
 
@@ -235,17 +240,13 @@ func NewCustom(init *InitType) (f *Scribe) {
 // sizeStr specifies the page size. Acceptable values are "A1", "A2", "A3", "A4", "A5",
 // "A6", "A7", "Letter", "Legal", or "Tabloid". An empty string will be replaced with "A4".
 //
-// fontDirStr specifies the file system location in which font resources will
-// be found. An empty string is replaced with ".". This argument only needs to
-// reference an actual directory if a font other than one of the core
-// fonts is used. The core fonts are "courier", "helvetica" (also called
-// "arial"), "times", and "zapfdingbats" (also called "symbol").
+// fontSet provides the set of fonts to be used in the document.
 func New(
 	orientationStr, unitStr string,
 	size PageSize,
-	fontDirStr string,
+	fontSet *FontSet,
 ) (f *Scribe) {
-	return scribeNew(orientationStr, unitStr, size, fontDirStr)
+	return scribeNew(orientationStr, unitStr, size, fontSet)
 }
 
 // Ok returns true if no processing errors have occurred.
@@ -836,11 +837,9 @@ func (f *Scribe) AddPageFormat(orientationStr string, size PageSize) {
 		f.outputDashPattern()
 	}
 	// 	Set font
-	if f.currentFont != 0 {
-		f.SetFont(f.currentFont, f.fontStyle, f.fontSizePt)
-		if f.err != nil {
-			return
-		}
+	f.SetFont(f.currentFont, f.fontStyle, f.fontSizePt)
+	if f.err != nil {
+		return
 	}
 	// 	Set colors
 	f.color.draw = dc
@@ -862,29 +861,6 @@ func (f *Scribe) AddPageFormat(orientationStr string, size PageSize) {
 			f.SetHomeXY()
 		}
 	}
-	// 	Restore line width
-	if f.lineWidth != lw {
-		f.lineWidth = lw
-		f.outf("%g w", lw*f.k)
-	}
-	// Restore font
-	if f.currentFont != 0 {
-		f.SetFont(f.currentFont, f.fontStyle, f.fontSizePt)
-		if f.err != nil {
-			return
-		}
-	}
-	// Restore colors
-	if f.color.draw.str != dc.str {
-		f.color.draw = dc
-		f.out(dc.str)
-	}
-	if f.color.fill.str != fc.str {
-		f.color.fill = fc
-		f.out(fc.str)
-	}
-	f.color.text = tc
-	f.colorFlag = cf
 }
 
 // AddPage adds a new page to the document. If a page is already present, the
@@ -1977,57 +1953,11 @@ func makeSubsetRange(set *bitset.BitSet, end uint32) {
 	}
 }
 
-type FontId uint8
-
-// AddUTF8FontFromBytes  imports a TrueType font with utf-8 symbols from static
-// bytes within the executable and makes it available for use in the generated
-// document.
-//
-// family specifies the font family. The name can be chosen arbitrarily. If it
-// is a standard family name, it will override the corresponding font. This
-// string is used to subsequently set the font with the SetFont method.
-//
-// style specifies the font style. Acceptable values are (case insensitive) the
-// empty string for regular style, "B" for bold, "I" for italic, or "BI" or
-// "IB" for bold and italic combined.
-//
-// jsonFileBytes contain all bytes of JSON file.
-//
-// zFileBytes contain all bytes of Z file.
-func (f *Scribe) AddUTF8FontFromBytes(
-	family string,
-	style FontStyle,
-	utf8Bytes []byte,
-) (FontId, error) {
-	return f.addFontFromBytes(fontFamilyEscape(family), style, utf8Bytes)
-}
-
-func (f *Scribe) addFontFromBytes(
-	family string, style FontStyle, utf8Bytes []byte,
-) (FontId, error) {
-	if f.err != nil {
-		return 0, f.err
-	}
-
-	def := fontDefType{
-		file:   utf8Bytes,
-		isUtf8: true,
-		key:    getFontKey(family, style),
-	}
-
-	err := ttf.Parse(utf8Bytes, &def.font)
-	if err != nil {
-		return 0, fmt.Errorf("unable to parse font file: %w", err)
-	}
-
-	f.fonts = append(f.fonts, def)
-
-	return FontId(len(f.fonts)), nil
-}
+type FontId = ttf.Id
 
 // getFontKey is used by AddFontFromReader and GetFontDesc
 func getFontKey(family string, style FontStyle) fontKey {
-	return fontKey{family: strings.ToLower(family), style: style}
+	return fontKey{Family: strings.ToLower(family), Style: style}
 }
 
 // SetFont sets the font used to print character strings. It is mandatory to
@@ -2058,11 +1988,11 @@ func getFontKey(family string, style FontStyle) fontKey {
 // size. If no size has been specified since the beginning of the document, the
 // value taken is 12.
 func (f *Scribe) SetFont(id FontId, style FontStyle, size float32) {
-	if f.err != nil {
+	if f.err != nil || f.currentFont == id {
 		return
 	}
 
-	if int(id) > len(f.fonts) {
+	if int(id) > f.fonts.Len() {
 		f.err = fmt.Errorf("invalid font id")
 	}
 
@@ -2075,7 +2005,7 @@ func (f *Scribe) SetFont(id FontId, style FontStyle, size float32) {
 	f.fontSize = size / f.k
 	f.currentFont = id
 	if f.page > 0 {
-		f.outf("BT /F%s %g Tf ET", f.font().key, f.fontSizePt)
+		f.outf("BT /F%s %g Tf ET", f.currentFontKey(), f.fontSizePt)
 	}
 }
 
@@ -2088,8 +2018,6 @@ func (f *Scribe) StyleRemove(style FontStyle) {
 }
 
 type fontSpec struct {
-	def *fontDefType
-
 	id         FontId
 	fontSizePt float32
 
@@ -2097,50 +2025,20 @@ type fontSpec struct {
 	isUtf8    bool
 }
 
-type FontStyle uint8
+type FontStyle = ttf.Style
 
 const (
-	FontStyleNone FontStyle = 0
+	FontStyleNone = ttf.StyleNone
 )
 
 const (
-	FontStyleB FontStyle = 1 << iota
-	FontStyleI
-	FontStyleS
-	FontStyleU
+	FontStyleB = ttf.StyleB
+	FontStyleI = ttf.StyleI
+	FontStyleS = ttf.StyleS
+	FontStyleU = ttf.StyleU
 )
 
-func (s FontStyle) Strike() bool {
-	return s&FontStyleS != 0
-}
-
-func (s FontStyle) String() string {
-	style := s & ^(FontStyleS | FontStyleU)
-
-	switch style {
-	case FontStyleB:
-		return "b"
-	case FontStyleI:
-		return "i"
-	case FontStyleB | FontStyleI:
-		return "bi"
-	}
-
-	return ""
-}
-
-func (s FontStyle) Underline() bool {
-	return s&FontStyleU != 0
-}
-
-type fontKey struct {
-	family string
-	style  FontStyle
-}
-
-func (k fontKey) String() string {
-	return strings.ToLower(k.family) + k.style.String()
-}
+type fontKey = ttf.Key
 
 func (f *Scribe) SetMeasurementFont(
 	id FontId,
@@ -2162,21 +2060,17 @@ func (f *Scribe) SetMeasurementFont(
 }
 
 func (f *Scribe) SetMeasurementFontSize(size float32) {
-	f.SetMeasurementFont(0, f.measurementFont.fontStyle, size)
+	f.SetMeasurementFont(f.currentFont, f.measurementFont.fontStyle, size)
 }
 
 func (f *Scribe) SetMeasurementFontStyle(style FontStyle) {
-	f.SetMeasurementFont(0, style, 0)
+	f.SetMeasurementFont(f.currentFont, style, 0)
 }
 
 func (f *Scribe) getFont(id FontId, style FontStyle, size float32) fontSpec {
 	spec := fontSpec{}
 	if f.err != nil {
 		return spec
-	}
-
-	if id == 0 {
-		id = f.currentFont
 	}
 
 	if size == 0 {
@@ -2186,7 +2080,6 @@ func (f *Scribe) getFont(id FontId, style FontStyle, size float32) fontSpec {
 	spec.id = id
 	spec.fontStyle = style
 	spec.fontSizePt = size
-	spec.def = f.font()
 
 	return spec
 }
@@ -2207,7 +2100,7 @@ func (f *Scribe) SetFontSize(size float32) {
 	f.fontSizePt = size
 	f.fontSize = size / f.k
 	if f.page > 0 {
-		f.outf("BT /F%s %g Tf ET", f.font().key, f.fontSizePt)
+		f.outf("BT /F%s %g Tf ET", f.font().Key(), f.fontSizePt)
 	}
 }
 
@@ -2217,7 +2110,7 @@ func (f *Scribe) SetFontUnitSize(size float32) {
 	f.fontSizePt = size * f.k
 	f.fontSize = size
 	if f.page > 0 {
-		f.outf("BT /F%s %g Tf ET", f.font().key, f.fontSizePt)
+		f.outf("BT /F%s %g Tf ET", f.font().Key(), f.fontSizePt)
 	}
 }
 
@@ -2288,9 +2181,10 @@ func (f *Scribe) Bookmark(txtStr string, level int, y float32) {
 	if y == -1 {
 		y = f.y
 	}
-	if f.font().isUtf8 {
-		txtStr = utf8toutf16(txtStr)
-	}
+
+	// [TODO] Re-add support for built-in ASCII fonts
+	txtStr = utf8toutf16(txtStr)
+
 	f.outlines = append(
 		f.outlines,
 		outlineType{
@@ -2311,31 +2205,33 @@ func (f *Scribe) Bookmark(txtStr string, level int, y float32) {
 // precisely on the page, but it is usually easier to use Cell(), MultiCell()
 // or Write() which are the standard methods to print text.
 func (f *Scribe) Text(x, y float32, txtStr string) {
-	font := f.font()
-
 	var txt2 string
-	if font.isUtf8 {
-		if f.isRTL {
-			txtStr = reverseText(txtStr)
-			x -= f.GetStringWidth(txtStr)
-		}
-		txt2 = f.escape(utf8toutf16(txtStr, false))
-		for _, uni := range txtStr {
-			font.usedRunes.Set(uint(uni))
-		}
-	} else {
-		txt2 = f.escape(txtStr)
+	// [TODO] Re-add support for built-in ASCII fonts
+	if f.isRTL {
+		txtStr = reverseText(txtStr)
+		x -= f.GetStringWidth(txtStr)
 	}
+
+	txt2 = f.escape(utf8toutf16(txtStr, false))
+
+	for _, uni := range txtStr {
+		f.usedRunes[f.currentFont].Set(uint(uni))
+	}
+
 	s := sprintf("BT %g %g Td (%s) Tj ET", x*f.k, (f.h-y)*f.k, txt2)
+
 	if f.fontStyle.Underline() && txtStr != "" {
 		s += " " + f.dounderline(x, y, txtStr)
 	}
+
 	if f.fontStyle.Strike() && txtStr != "" {
 		s += " " + f.dostrikeout(x, y, txtStr)
 	}
+
 	if f.colorFlag {
 		s = sprintf("q %s %s Q", f.color.text.str, s)
 	}
+
 	f.out(s)
 }
 
@@ -2436,11 +2332,6 @@ func (f *Scribe) CellFormat(
 		return
 	}
 
-	if f.currentFont == 0 {
-		f.err = fmt.Errorf("font has not been set; unable to render text")
-		return
-	}
-
 	font := f.font()
 
 	borderStr = strings.ToUpper(borderStr)
@@ -2470,7 +2361,7 @@ func (f *Scribe) CellFormat(
 	if width == 0 {
 		width = f.w - f.rMargin - f.x
 	}
-	var s fmtBuffer
+	s := newFmtBuffer(128)
 	if height > 0 && (fill || borderStr == "1") {
 		var op string
 		if fill {
@@ -2496,13 +2387,13 @@ func (f *Scribe) CellFormat(
 		)
 	}
 	if len(borderStr) > 0 && borderStr != "1" {
-		// fmt.Printf("border is '%s', no fill\n", borderStr)
 		x := f.x
 		y := f.y
 		left := x * k
 		top := (f.h - y) * k
 		right := (x + width) * k
 		bottom := (f.h - (y + height)) * k
+
 		if strings.Contains(borderStr, "L") {
 			s.printf("%g %g m %g %g l S ", left, top, left, bottom)
 		}
@@ -2538,7 +2429,7 @@ func (f *Scribe) CellFormat(
 			dy = (height - f.fontSize) / 2.0
 		case strings.Contains(alignStr, "A"):
 			var descent float32
-			d := font.font
+			d := font.Font()
 			if d.Descent == 0 {
 				// not defined (standard font?), use average of 19%
 				descent = -0.19 * f.fontSize
@@ -2553,13 +2444,13 @@ func (f *Scribe) CellFormat(
 			s.printf("q %s ", f.color.text.str)
 		}
 		//If multibyte, Tw has no effect - do word spacing using an adjustment before each space
-		if (f.ws != 0 || alignStr == "J") && font.isUtf8 { // && f.ws != 0
+		if f.ws != 0 || alignStr == "J" {
 			if f.isRTL {
 				txtStr = reverseText(txtStr)
 			}
 			wmax := float32((width - 2*f.cMargin) * 1000 / f.fontSize)
 			for _, uni := range txtStr {
-				font.usedRunes.Set(uint(uni))
+				f.usedRunes[f.currentFont].Set(uint(uni))
 			}
 			space := f.escape(utf8toutf16(" ", false))
 			strSize := strGlyphWidth
@@ -2582,16 +2473,13 @@ func (f *Scribe) CellFormat(
 			s.printf("] TJ ET")
 		} else {
 			var txt2 string
-			if font.isUtf8 {
-				if f.isRTL {
-					txtStr = reverseText(txtStr)
-				}
-				txt2 = f.escape(utf8toutf16(txtStr, false))
-				for _, uni := range txtStr {
-					font.usedRunes.Set(uint(uni))
-				}
-			} else {
-				txt2 = f.escape(txtStr)
+			// [TODO] Re-add support for built-in ASCII fonts
+			if f.isRTL {
+				txtStr = reverseText(txtStr)
+			}
+			txt2 = f.escape(utf8toutf16(txtStr, false))
+			for _, uni := range txtStr {
+				f.usedRunes[f.currentFont].Set(uint(uni))
 			}
 			bt := (f.x + dx) * k
 			td := (f.h - (f.y + dy + .5*height + .3*f.fontSize)) * k
@@ -2748,9 +2636,6 @@ func (f *Scribe) MultiCell(
 	txtStr, borderStr, alignStr string,
 	fill bool,
 ) {
-	if f.currentFont == 0 {
-		f.err = fmt.Errorf("no font selected")
-	}
 	if f.err != nil {
 		return
 	}
@@ -2768,30 +2653,12 @@ func (f *Scribe) MultiCell(
 	srune := []rune(s)
 
 	// remove extra line breaks
-	var nb int
-	if font.isUtf8 {
-		nb = len(srune)
-		for nb > 0 && srune[nb-1] == '\n' {
-			nb--
-		}
-		srune = srune[0:nb]
-	} else {
-		nb = len(s)
-		bytes2 := []byte(s)
-
-		// for nb > 0 && bytes2[nb-1] == '\n' {
-
-		// Prior to August 2019, if s ended with a newline, this code stripped it.
-		// After that date, to be compatible with the UTF-8 code above, *all*
-		// trailing newlines were removed. Because this regression caused at least
-		// one application to break (see issue #333), the original behavior has been
-		// reinstated with a caveat included in the documentation.
-		if nb > 0 && bytes2[nb-1] == '\n' {
-			nb--
-		}
-		s = s[0:nb]
+	runeCount := len(srune)
+	for runeCount > 0 && srune[runeCount-1] == '\n' {
+		runeCount--
 	}
-	// dbg("[%s]\n", s)
+	srune = srune[0:runeCount]
+
 	var b, b2 string
 	b = "0"
 	if len(borderStr) > 0 {
@@ -2814,6 +2681,9 @@ func (f *Scribe) MultiCell(
 			}
 		}
 	}
+
+	// [TODO] Perf audit
+
 	sep := -1
 	i := 0
 	j := 0
@@ -2821,14 +2691,9 @@ func (f *Scribe) MultiCell(
 	ls := float32(0)
 	ns := 0
 	nl := 1
-	for i < nb {
+	for i < runeCount {
 		// Get next character
-		var c rune
-		if font.isUtf8 {
-			c = srune[i]
-		} else {
-			c = rune(s[i])
-		}
+		c := srune[i]
 		if c == '\n' {
 			// Explicit line break
 			if f.ws > 0 {
@@ -2836,29 +2701,25 @@ func (f *Scribe) MultiCell(
 				f.out("0 Tw")
 			}
 
-			if font.isUtf8 {
-				newAlignStr := alignStr
-				if newAlignStr == "J" {
-					if f.isRTL {
-						newAlignStr = "R"
-					} else {
-						newAlignStr = "L"
-					}
+			newAlignStr := alignStr
+			if newAlignStr == "J" {
+				if f.isRTL {
+					newAlignStr = "R"
+				} else {
+					newAlignStr = "L"
 				}
-				f.CellFormat(
-					width,
-					height,
-					string(srune[j:i]),
-					b,
-					2,
-					newAlignStr,
-					fill,
-					0,
-					"",
-				)
-			} else {
-				f.CellFormat(width, height, s[j:i], b, 2, alignStr, fill, 0, "")
 			}
+			f.CellFormat(
+				width,
+				height,
+				string(srune[j:i]),
+				b,
+				2,
+				newAlignStr,
+				fill,
+				0,
+				"",
+			)
 			i++
 			sep = -1
 			j = i
@@ -2890,21 +2751,17 @@ func (f *Scribe) MultiCell(
 					f.ws = 0
 					f.out("0 Tw")
 				}
-				if font.isUtf8 {
-					f.CellFormat(
-						width,
-						height,
-						string(srune[j:i]),
-						b,
-						2,
-						alignStr,
-						fill,
-						0,
-						"",
-					)
-				} else {
-					f.CellFormat(width, height, s[j:i], b, 2, alignStr, fill, 0, "")
-				}
+				f.CellFormat(
+					width,
+					height,
+					string(srune[j:i]),
+					b,
+					2,
+					alignStr,
+					fill,
+					0,
+					"",
+				)
 			} else {
 				if alignStr == "J" {
 					if ns > 1 {
@@ -2916,11 +2773,7 @@ func (f *Scribe) MultiCell(
 					f.putF64(f.ws*f.k, 3)
 					f.put(" Tw\n")
 				}
-				if font.isUtf8 {
-					f.CellFormat(width, height, string(srune[j:sep]), b, 2, alignStr, fill, 0, "")
-				} else {
-					f.CellFormat(width, height, s[j:sep], b, 2, alignStr, fill, 0, "")
-				}
+				f.CellFormat(width, height, string(srune[j:sep]), b, 2, alignStr, fill, 0, "")
 				i = sep + 1
 			}
 			sep = -1
@@ -2943,47 +2796,43 @@ func (f *Scribe) MultiCell(
 	if len(borderStr) > 0 && strings.Contains(borderStr, "B") {
 		b += "B"
 	}
-	if font.isUtf8 {
-		if alignStr == "J" {
-			if f.isRTL {
-				alignStr = "R"
-			} else {
-				alignStr = ""
-			}
+
+	if alignStr == "J" {
+		if f.isRTL {
+			alignStr = "R"
+		} else {
+			alignStr = ""
 		}
-		f.CellFormat(
-			width,
-			height,
-			string(srune[j:i]),
-			b,
-			2,
-			alignStr,
-			fill,
-			0,
-			"",
-		)
-	} else {
-		f.CellFormat(width, height, s[j:i], b, 2, alignStr, fill, 0, "")
 	}
+
+	f.CellFormat(
+		width,
+		height,
+		string(srune[j:i]),
+		b,
+		2,
+		alignStr,
+		fill,
+		0,
+		"",
+	)
+
 	f.x = f.lMargin
 }
 
 // write outputs text in flowing mode
 func (f *Scribe) write(lnHeight float32, txt string, link int, linkStr string) {
-	// dbg("Write")
+	// [TODO] Per audit
+
 	font := f.font()
 	w := f.w - f.rMargin - f.x
 	wmax := (w - 2*f.cMargin) * 1000 / f.fontSize
 	s := strings.Replace(txt, "\r", "", -1)
-	var nb int
-	if font.isUtf8 {
-		nb = len([]rune(s))
-		if nb == 1 && s == " " {
-			f.x += f.GetStringWidth(s)
-			return
-		}
-	} else {
-		nb = len(s)
+
+	nb := len([]rune(s))
+	if nb == 1 && s == " " {
+		f.x += f.GetStringWidth(s)
+		return
 	}
 	sep := -1
 	i := 0
@@ -2993,28 +2842,20 @@ func (f *Scribe) write(lnHeight float32, txt string, link int, linkStr string) {
 	for i < nb {
 		// Get next character
 		var c rune
-		if font.isUtf8 {
-			c = []rune(s)[i]
-		} else {
-			c = rune(byte(s[i]))
-		}
+		c = []rune(s)[i]
 		if c == '\n' {
 			// Explicit line break
-			if font.isUtf8 {
-				f.CellFormat(
-					w,
-					lnHeight,
-					string([]rune(s)[j:i]),
-					"",
-					2,
-					"",
-					false,
-					link,
-					linkStr,
-				)
-			} else {
-				f.CellFormat(w, lnHeight, s[j:i], "", 2, "", false, link, linkStr)
-			}
+			f.CellFormat(
+				w,
+				lnHeight,
+				string([]rune(s)[j:i]),
+				"",
+				2,
+				"",
+				false,
+				link,
+				linkStr,
+			)
 			i++
 			sep = -1
 			j = i
@@ -3048,27 +2889,19 @@ func (f *Scribe) write(lnHeight float32, txt string, link int, linkStr string) {
 				if i == j {
 					i++
 				}
-				if font.isUtf8 {
-					f.CellFormat(
-						w,
-						lnHeight,
-						string([]rune(s)[j:i]),
-						"",
-						2,
-						"",
-						false,
-						link,
-						linkStr,
-					)
-				} else {
-					f.CellFormat(w, lnHeight, s[j:i], "", 2, "", false, link, linkStr)
-				}
+				f.CellFormat(
+					w,
+					lnHeight,
+					string([]rune(s)[j:i]),
+					"",
+					2,
+					"",
+					false,
+					link,
+					linkStr,
+				)
 			} else {
-				if font.isUtf8 {
-					f.CellFormat(w, lnHeight, string([]rune(s)[j:sep]), "", 2, "", false, link, linkStr)
-				} else {
-					f.CellFormat(w, lnHeight, s[j:sep], "", 2, "", false, link, linkStr)
-				}
+				f.CellFormat(w, lnHeight, string([]rune(s)[j:sep]), "", 2, "", false, link, linkStr)
 				i = sep + 1
 			}
 			sep = -1
@@ -3086,21 +2919,17 @@ func (f *Scribe) write(lnHeight float32, txt string, link int, linkStr string) {
 	}
 	// Last chunk
 	if i != j {
-		if font.isUtf8 {
-			f.CellFormat(
-				l/1000*f.fontSize,
-				lnHeight,
-				string([]rune(s)[j:]),
-				"",
-				0,
-				"",
-				false,
-				link,
-				linkStr,
-			)
-		} else {
-			f.CellFormat(l/1000*f.fontSize, lnHeight, s[j:], "", 0, "", false, link, linkStr)
-		}
+		f.CellFormat(
+			l/1000*f.fontSize,
+			lnHeight,
+			string([]rune(s)[j:]),
+			"",
+			0,
+			"",
+			false,
+			link,
+			linkStr,
+		)
 	}
 }
 
@@ -3158,16 +2987,7 @@ func (f *Scribe) WriteAligned(
 		width = pageWidth - (lMargin + rMargin)
 	}
 
-	var lines []string
-
-	if f.font().isUtf8 {
-		lines = f.TextSplit(textStr, width)
-	} else {
-		for _, line := range f.SplitLines([]byte(textStr), width) {
-			lines = append(lines, string(line))
-		}
-	}
-
+	lines := f.TextSplit(textStr, width)
 	for _, lineBt := range lines {
 		lineStr := string(lineBt)
 		lineWidth := f.GetStringWidth(lineStr)
@@ -3788,7 +3608,7 @@ func (f *Scribe) beginpage(orientationStr string, size PageSize) {
 	for box, pb := range f.defPageBoxes {
 		f.pageBoxes[f.page][box] = pb
 	}
-	f.pages = append(f.pages, bytes.NewBufferString(""))
+	f.pages = append(f.pages, bytes.NewBuffer(make([]byte, 0, 16*1024)))
 	f.pageLinks = append(f.pageLinks, make([]linkType, 0))
 	f.pageAttachments = append(f.pageAttachments, []annotationAttach{})
 	f.state = 2
@@ -3871,7 +3691,7 @@ func (f *Scribe) SetUnderlineThickness(thickness float32) {
 
 // Underline text
 func (f *Scribe) dounderline(x, y float32, txt string) string {
-	font := f.font().font
+	font := f.font().Font()
 	up := font.UnderlinePos
 	ut := font.UnderlineSize * f.userUnderlineThickness
 	w := f.GetStringWidth(txt) + f.ws*float32(blankCount(txt))
@@ -3880,7 +3700,7 @@ func (f *Scribe) dounderline(x, y float32, txt string) string {
 }
 
 func (f *Scribe) dostrikeout(x, y float32, txt string) string {
-	font := f.font().font
+	font := f.font().Font()
 	up := font.StrikeoutPos
 	ut := font.StrikeoutSize
 	w := f.GetStringWidth(txt) + f.ws*float32(blankCount(txt))
@@ -4036,6 +3856,10 @@ func (f *Scribe) RawWriteBuf(r io.Reader) {
 // outf adds a formatted line to the document
 func (f *Scribe) outf(fmtStr string, args ...interface{}) {
 	f.out(sprintf(fmtStr, args...))
+}
+
+func (f *Scribe) putf(fmtStr string, args ...interface{}) {
+	f.put(sprintf(fmtStr, args...))
 }
 
 func (f *Scribe) putF64(v float32, prec int) {
@@ -4250,7 +4074,7 @@ func (f *Scribe) putpages() {
 	f.offsets[1] = uint32(f.buffer.Len())
 	f.out("1 0 obj")
 	f.out("<</Type /Pages")
-	var kids fmtBuffer
+	kids := newFmtBuffer(8 * uint32(nb+1))
 	kids.printf("/Kids [")
 	for i := 1; i <= nb; i++ {
 		kids.printf("%d 0 R ", pagesObjectNumbers[i])
@@ -4306,34 +4130,36 @@ func (f *Scribe) putfonts() {
 		f.putstream([]byte(toUnicode))
 		f.out("endobj")
 
-		var fontsSorted []*fontDefType
-		for i := range f.fonts {
-			fontsSorted = append(fontsSorted, &f.fonts[i])
+		fontsSorted := make([]*ttf.FontInfo, f.fonts.Len())
+		for i := range f.fonts.Len() {
+			fontsSorted[i] = f.fonts.Get(ttf.Id(i))
 		}
 		if f.catalogSort {
 			sort.Slice(fontsSorted, func(i, j int) bool {
-				return fontsSorted[i].key.family < fontsSorted[j].key.family ||
-					(fontsSorted[i].key.family == fontsSorted[j].key.family &&
-						fontsSorted[i].key.style < fontsSorted[j].key.style)
+				return fontsSorted[i].Key().Family < fontsSorted[j].Key().Family ||
+					(fontsSorted[i].Key().Family == fontsSorted[j].Key().Family &&
+						fontsSorted[i].Key().Style < fontsSorted[j].Key().Style)
 			})
 		}
-		for _, font := range fontsSorted {
-			if font.usedRunes.Count() == 0 {
+		for id := range f.fonts.Len() {
+			fontInfo := f.fonts.Get(ttf.Id(id))
+			font := fontInfo.Font()
+
+			if f.usedRunes[id].Count() == 0 {
 				continue
 			}
 
-			font.objId = f.n + 1
+			f.fontObjIds[id] = f.n + 1
 			tp := "UTF8"
 			switch tp {
 			case "UTF8":
-				fontName := "utf8" + font.String()
+				fontName := "utf8" + fontInfo.String()
 				utf8FontStream := []byte{}
 
 				var gidRemap []uint16
 				utf8FontStream, gidRemap, f.err = ttf.Generate(
-					font.file,
-					&font.font,
-					&font.usedRunes,
+					font,
+					&f.usedRunes[id],
 					utf8FontStream,
 				)
 				if f.err != nil {
@@ -4341,8 +4167,8 @@ func (f *Scribe) putfonts() {
 				}
 				utf8FontSize := len(utf8FontStream)
 
-				usedRunes := font.usedRunes.AsSlice(
-					make([]uint, font.usedRunes.Count()),
+				usedRunes := f.usedRunes[id].AsSlice(
+					make([]uint, f.usedRunes[id].Count()),
 				)
 
 				f.newobj()
@@ -4364,7 +4190,7 @@ func (f *Scribe) putfonts() {
 						int(f.n)+1,
 					) + " 0 R",
 				)
-				defaultWidth := font.font.Width(0)
+				defaultWidth := font.Width(0)
 				defaultWidthStr := f.fmtF64(defaultWidth, -1)
 				if defaultWidth != 0 {
 					f.out("/DW " + defaultWidthStr)
@@ -4379,9 +4205,9 @@ func (f *Scribe) putfonts() {
 							f.put("] " + strconv.Itoa(int(char)) + " [ ")
 						}
 
-						gid := font.font.GlyphId(rune(char))
+						gid := font.GlyphId(rune(char))
 						f.put(
-							f.fmtF64(font.font.Width(uint16(gid)), -1) + " ",
+							f.fmtF64(font.Width(uint16(gid)), -1) + " ",
 						)
 
 						lastChar = char
@@ -4395,26 +4221,26 @@ func (f *Scribe) putfonts() {
 
 				// Font descriptor
 				f.newobj()
-				var s fmtBuffer
+				s := newFmtBuffer(128)
 				s.printf(
 					"<</Type /FontDescriptor /FontName /%s\n /Ascent %.5g",
 					fontName,
-					font.font.Ascent,
+					font.Ascent,
 				)
-				s.printf(" /Descent %g", font.font.Descent)
-				s.printf(" /CapHeight %g", font.font.CapHeight)
-				v := font.font.Flags
+				s.printf(" /Descent %g", font.Descent)
+				s.printf(" /CapHeight %g", font.CapHeight)
+				v := font.Flags
 				v = v | 4
 				v = v &^ 32
 				s.printf(" /Flags %d", v)
 				s.printf(
 					"/FontBBox [%g %g %g %g] ",
-					font.font.Bounds.Min[0],
-					font.font.Bounds.Min[1],
-					font.font.Bounds.Max[0],
-					font.font.Bounds.Max[1],
+					font.Bounds.Min[0],
+					font.Bounds.Min[1],
+					font.Bounds.Max[0],
+					font.Bounds.Max[1],
 				)
-				s.printf(" /ItalicAngle %g", font.font.ItalicAngle)
+				s.printf(" /ItalicAngle %g", font.ItalicAngle)
 				// s.printf(" /StemV %d", font.StemV)
 				s.printf(" /StemV %d", 80) // [TODO] Derive from font metrics
 				s.printf(" /MissingWidth %g", defaultWidth)
@@ -4426,7 +4252,7 @@ func (f *Scribe) putfonts() {
 				// Embed CIDToGIDMap
 				cidToGidMap := [256 * 256 * 2]byte{}
 				for _, char := range usedRunes {
-					gidOld := font.font.GlyphId(rune(char))
+					gidOld := font.GlyphId(rune(char))
 					binary.BigEndian.PutUint16(
 						cidToGidMap[uint32(char)*2:],
 						gidRemap[gidOld],
@@ -4466,10 +4292,12 @@ func (f *Scribe) putfonts() {
 }
 
 func (f *Scribe) putimages() {
-	var keyList []string
+	keyList := make([]string, len(f.images))
 	var key string
+	var i = 0
 	for key = range f.images {
-		keyList = append(keyList, key)
+		keyList[i] = key
+		i += 1
 	}
 
 	if f.catalogSort {
@@ -4525,7 +4353,7 @@ func (f *Scribe) putimage(info *ImageInfoType) {
 		f.outf("/DecodeParms <<%s>>", info.dp)
 	}
 	if len(info.trns) > 0 {
-		var trns fmtBuffer
+		trns := newFmtBuffer(uint32(len(info.trns)) * 16)
 		for _, v := range info.trns {
 			trns.printf("%d %d ", v, v)
 		}
@@ -4575,9 +4403,11 @@ func (f *Scribe) putxobjectdict() {
 	{
 		var image *ImageInfoType
 		var key string
-		var keyList []string
+		i := 0
+		keyList := make([]string, len(f.images))
 		for key = range f.images {
-			keyList = append(keyList, key)
+			keyList[i] = key
+			i += 1
 		}
 		if f.catalogSort {
 			slices.Sort(keyList)
@@ -4612,25 +4442,8 @@ func (f *Scribe) putxobjectdict() {
 func (f *Scribe) putresourcedict() {
 	f.out("/ProcSet [/PDF /Text /ImageB /ImageC /ImageI]")
 	f.out("/Font <<")
-	{
-		var fontsSorted []*fontDefType
-		for i := range f.fonts {
-			if f.fonts[i].usedRunes.Count() == 0 {
-				continue
-			}
-
-			fontsSorted = append(fontsSorted, &f.fonts[i])
-		}
-		if f.catalogSort {
-			sort.Slice(fontsSorted, func(i, j int) bool {
-				return fontsSorted[i].key.family < fontsSorted[j].key.family ||
-					(fontsSorted[i].key.family == fontsSorted[j].key.family &&
-						fontsSorted[i].key.style < fontsSorted[j].key.style)
-			})
-		}
-		for _, font := range fontsSorted {
-			f.outf("/F%s %d 0 R", font.key, font.objId)
-		}
+	for id := range f.fonts.Len() {
+		f.outf("/F%s %d 0 R", f.fonts.Get(ttf.Id(id)), f.fontObjIds[id])
 	}
 	f.out(">>")
 	f.out("/XObject <<")
