@@ -2014,12 +2014,7 @@ func getFontKey(family string, style FontStyle) fontKey {
 // size. If no size has been specified since the beginning of the document, the
 // value taken is 12.
 func (f *Scribe) SetFont(id FontId, style FontStyle, size float32) {
-	unchanged := true &&
-		f.currentFont == id &&
-		f.fontSizePt == size &&
-		f.fontStyle == style
-
-	if f.err != nil || unchanged {
+	if f.err != nil {
 		return
 	}
 
