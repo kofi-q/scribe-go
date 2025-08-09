@@ -1050,7 +1050,7 @@ func (f *Scribe) SetLineWidth(width float32) {
 func (f *Scribe) setLineWidth(width float32) {
 	f.lineWidth = width
 	if f.page > 0 {
-		f.out(f.fmtF64(width*f.k, 4) + " w")
+		f.out(f.fmtF64(width*f.k, -1) + " w")
 	}
 }
 
@@ -1754,7 +1754,7 @@ func (f *Scribe) ClipRoundedRectExt(
 func (f *Scribe) roundedRectPath(x, y, w, h, rTL, rTR, rBR, rBL float32) {
 	k := f.k
 	hp := f.h
-	var myArc float32 = (4.0 / 3.0) * (math.Sqrt2 - 1.0)
+	var myArc float64 = (4.0 / 3.0) * (math.Sqrt2 - 1.0)
 	// f.outf("q %g %g m", (x+rTL)*k, (hp-y)*k)
 	const prec = -1
 	f.put("q ")
@@ -1764,43 +1764,67 @@ func (f *Scribe) roundedRectPath(x, y, w, h, rTL, rTR, rBR, rBL float32) {
 	f.put(" m\n")
 	xc := x + w - rTR
 	yc := y + rTR
-	// f.outf("%g %g l", xc*k, (hp-y)*k)
 	f.putF64(xc*k, prec)
 	f.put(" ")
 	f.putF64((hp-y)*k, prec)
 	f.put(" l\n")
 	if rTR != 0 {
-		f.clipArc(xc+rTR*myArc, yc-rTR, xc+rTR, yc-rTR*myArc, xc+rTR, yc)
+		f.clipArc(
+			float32(float64(xc)+float64(rTR)*myArc),
+			yc-rTR,
+			xc+rTR,
+			float32(float64(yc)-float64(rTR)*myArc),
+			xc+rTR,
+			yc,
+		)
 	}
 	xc = x + w - rBR
 	yc = y + h - rBR
-	// f.outf("%g %g l", (x+w)*k, (hp-yc)*k)
 	f.putF64((x+w)*k, prec)
 	f.put(" ")
 	f.putF64((hp-yc)*k, prec)
 	f.put(" l\n")
 	if rBR != 0 {
-		f.clipArc(xc+rBR, yc+rBR*myArc, xc+rBR*myArc, yc+rBR, xc, yc+rBR)
+		f.clipArc(
+			xc+rBR,
+			float32(float64(yc)+float64(rBR)*myArc),
+			float32(float64(xc)+float64(rBR)*myArc),
+			yc+rBR,
+			xc,
+			yc+rBR,
+		)
 	}
 	xc = x + rBL
 	yc = y + h - rBL
-	// f.outf("%g %g l", xc*k, (hp-(y+h))*k)
 	f.putF64(xc*k, prec)
 	f.put(" ")
 	f.putF64((hp-(y+h))*k, prec)
 	f.put(" l\n")
 	if rBL != 0 {
-		f.clipArc(xc-rBL*myArc, yc+rBL, xc-rBL, yc+rBL*myArc, xc-rBL, yc)
+		f.clipArc(
+			float32(float64(xc)-float64(rBL)*myArc),
+			yc+rBL,
+			xc-rBL,
+			float32(float64(yc)+float64(rBL)*myArc),
+			xc-rBL,
+			yc,
+		)
 	}
 	xc = x + rTL
 	yc = y + rTL
-	// f.outf("%g %g l", x*k, (hp-yc)*k)
 	f.putF64(x*k, prec)
 	f.put(" ")
 	f.putF64((hp-yc)*k, prec)
 	f.put(" l\n")
 	if rTL != 0 {
-		f.clipArc(xc-rTL, yc-rTL*myArc, xc-rTL*myArc, yc-rTL, xc, yc-rTL)
+		f.clipArc(
+			xc-rTL,
+			float32(float64(yc)-float64(rTL)*myArc),
+			float32(float64(xc)-float64(rTL)*myArc),
+			yc-rTL,
+			xc,
+			yc-rTL,
+		)
 	}
 }
 
@@ -4251,9 +4275,8 @@ func (f *Scribe) putfonts() {
 					) + " 0 R",
 				)
 				defaultWidth := font.Width(0)
-				defaultWidthStr := f.fmtF64(defaultWidth, -1)
 				if defaultWidth != 0 {
-					f.out("/DW " + defaultWidthStr)
+					f.out("/DW " + f.fmtF64(defaultWidth, -1))
 				}
 
 				{
