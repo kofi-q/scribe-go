@@ -39,7 +39,6 @@ import (
 	"math"
 	"os"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -84,7 +83,6 @@ func scribeNew(
 	if unitStr == "" {
 		unitStr = "mm"
 	}
-	f.buffer = newFmtBuffer(64 * 1024)
 	f.page = 0
 	f.n = 2
 	f.pages = make([]*bytes.Buffer, 0, 8)
@@ -735,7 +733,7 @@ func (f *Scribe) open() {
 // explicitly because Output(), OutputAndClose() and OutputFileAndClose() do it
 // automatically. If the document contains no page, AddPage() is called to
 // prevent the generation of an invalid document.
-func (f *Scribe) Close() {
+func (f *Scribe) Close(writer io.Writer) error {
 	if f.err == nil {
 		if f.clipNest > 0 {
 			f.err = fmt.Errorf("clip procedure must be explicitly ended")
@@ -744,15 +742,15 @@ func (f *Scribe) Close() {
 		}
 	}
 	if f.err != nil {
-		return
+		return f.err
 	}
 	if f.state == 3 {
-		return
+		return nil
 	}
 	if f.page == 0 {
 		f.AddPage()
 		if f.err != nil {
-			return
+			return f.err
 		}
 	}
 	// Page footer
@@ -764,10 +762,14 @@ func (f *Scribe) Close() {
 	}
 	f.inFooter = false
 
+	f.writer = writer
+
 	// Close page
 	f.endpage()
 	// Close document
 	f.enddoc()
+
+	return nil
 }
 
 // PageSize returns the width and height of the specified page in the units
@@ -1988,7 +1990,12 @@ func getFontKey(family string, style FontStyle) fontKey {
 // size. If no size has been specified since the beginning of the document, the
 // value taken is 12.
 func (f *Scribe) SetFont(id FontId, style FontStyle, size float32) {
-	if f.err != nil || f.currentFont == id {
+	unchanged := true &&
+		f.currentFont == id &&
+		f.fontSizePt == size &&
+		f.fontStyle == style
+
+	if f.err != nil || unchanged {
 		return
 	}
 
@@ -3588,13 +3595,12 @@ func (f *Scribe) Output(w io.Writer) error {
 		return f.err
 	}
 	// dbg("Output")
-	if f.state < 3 {
-		f.Close()
-	}
-	_, err := f.buffer.WriteTo(w)
+	err := f.Close(w)
+	// _, err := f.buffer.WriteTo(w)
 	if err != nil {
 		f.err = err
 	}
+
 	return f.err
 }
 
@@ -3786,6 +3792,68 @@ func (f *Scribe) parsegif(r io.Reader) (info *ImageInfoType) {
 	return f.parsepngstream(&rbuffer{p: pngBuf.Bytes()}, false)
 }
 
+func (f *Scribe) print(bytes []byte) {
+	n, err := f.writer.Write(bytes)
+	if err != nil {
+		f.err = err
+		return
+	}
+
+	f.bytesWritten += uint32(n)
+}
+
+func (f *Scribe) printCopy(reader io.Reader) {
+	n, err := io.Copy(f.writer, reader)
+	if err != nil {
+		f.err = err
+		return
+	}
+
+	f.bytesWritten += uint32(n)
+}
+
+func (f *Scribe) printStr(str string) {
+	n, err := f.writer.Write([]byte(str))
+	if err != nil {
+		f.err = err
+		return
+	}
+
+	f.bytesWritten += uint32(n)
+}
+
+func (f *Scribe) printf(format string, args ...any) {
+	n, err := fmt.Fprintf(f.writer, format, args...)
+	if err != nil {
+		f.err = err
+		return
+	}
+
+	f.bytesWritten += uint32(n)
+}
+
+func (f *Scribe) println(arg any) {
+	n, err := fmt.Fprintln(f.writer, arg)
+	if err != nil {
+		f.err = err
+		return
+	}
+
+	f.bytesWritten += uint32(n)
+}
+
+func (f *Scribe) printlnF(format string, args ...any) {
+	f.printf(format, args...)
+
+	n, err := f.writer.Write([]byte{'\n'})
+	if err != nil {
+		f.err = err
+		return
+	}
+
+	f.bytesWritten += uint32(n)
+}
+
 // newobj begins a new object
 func (f *Scribe) newobj() {
 	// dbg("newobj")
@@ -3793,7 +3861,7 @@ func (f *Scribe) newobj() {
 	for j := uint32(len(f.offsets)); j <= f.n; j++ {
 		f.offsets = append(f.offsets, 0)
 	}
-	f.offsets[f.n] = uint32(f.buffer.Len())
+	f.offsets[f.n] = f.bytesWritten
 	f.outf("%d 0 obj", f.n)
 }
 
@@ -3813,8 +3881,7 @@ func (f *Scribe) out(s string) {
 		must(f.pages[f.page].WriteString(s))
 		must(f.pages[f.page].WriteString("\n"))
 	} else {
-		must(f.buffer.WriteString(s))
-		must(f.buffer.WriteString("\n"))
+		f.println(s)
 	}
 }
 
@@ -3822,7 +3889,7 @@ func (f *Scribe) put(s string) {
 	if f.state == 2 {
 		f.pages[f.page].WriteString(s)
 	} else {
-		f.buffer.WriteString(s)
+		f.printStr(s)
 	}
 }
 
@@ -3832,8 +3899,8 @@ func (f *Scribe) outbuf(r io.Reader) {
 		must64(f.pages[f.page].ReadFrom(r))
 		must(f.pages[f.page].WriteString("\n"))
 	} else {
-		must64(f.buffer.ReadFrom(r))
-		must(f.buffer.WriteString("\n"))
+		f.printCopy(r)
+		f.print([]byte{'\n'})
 	}
 }
 
@@ -3855,7 +3922,12 @@ func (f *Scribe) RawWriteBuf(r io.Reader) {
 
 // outf adds a formatted line to the document
 func (f *Scribe) outf(fmtStr string, args ...interface{}) {
-	f.out(sprintf(fmtStr, args...))
+	if f.state == 2 {
+		must(f.pages[f.page].WriteString(sprintf(fmtStr, args...)))
+		must(f.pages[f.page].WriteString("\n"))
+	} else {
+		f.printlnF(fmtStr, args...)
+	}
 }
 
 func (f *Scribe) putf(fmtStr string, args ...interface{}) {
@@ -4071,7 +4143,7 @@ func (f *Scribe) putpages() {
 		f.out("endobj")
 	}
 	// Pages root
-	f.offsets[1] = uint32(f.buffer.Len())
+	f.offsets[1] = f.bytesWritten
 	f.out("1 0 obj")
 	f.out("<</Type /Pages")
 	kids := newFmtBuffer(8 * uint32(nb+1))
@@ -4130,17 +4202,6 @@ func (f *Scribe) putfonts() {
 		f.putstream([]byte(toUnicode))
 		f.out("endobj")
 
-		fontsSorted := make([]*ttf.FontInfo, f.fonts.Len())
-		for i := range f.fonts.Len() {
-			fontsSorted[i] = f.fonts.Get(ttf.Id(i))
-		}
-		if f.catalogSort {
-			sort.Slice(fontsSorted, func(i, j int) bool {
-				return fontsSorted[i].Key().Family < fontsSorted[j].Key().Family ||
-					(fontsSorted[i].Key().Family == fontsSorted[j].Key().Family &&
-						fontsSorted[i].Key().Style < fontsSorted[j].Key().Style)
-			})
-		}
 		for id := range f.fonts.Len() {
 			fontInfo := f.fonts.Get(ttf.Id(id))
 			font := fontInfo.Font()
@@ -4560,7 +4621,7 @@ func (f *Scribe) putresources() {
 	f.putTemplates()
 	f.putImportedTemplates() // gofpdi
 	// 	Resource dictionary
-	f.offsets[2] = uint32(f.buffer.Len())
+	f.offsets[2] = f.bytesWritten
 	f.out("2 0 obj")
 	f.out("<<")
 	f.putresourcedict()
@@ -4829,7 +4890,7 @@ func (f *Scribe) enddoc() {
 	f.out(">>")
 	f.out("endobj")
 	// Cross-ref
-	o := f.buffer.Len()
+	o := f.bytesWritten
 	f.out("xref")
 	f.outf("0 %d", f.n+1)
 	f.out("0000000000 65535 f ")

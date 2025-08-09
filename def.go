@@ -468,7 +468,7 @@ type Scriber interface {
 	ClipRect(x, y, w, h float32, outline bool)
 	ClipRoundedRect(x, y, w, h, r float32, outline bool)
 	ClipText(x, y float32, txtStr string, outline bool)
-	Close()
+	Close(io.Writer) error
 	ClosePath()
 	CreateTemplateCustom(
 		id string,
@@ -697,8 +697,7 @@ type Scribe struct {
 		buf []byte       // buffer used to format numbers.
 	}
 
-	buffer fmtBuffer    // buffer holding in-memory PDF
-	layer  layerRecType // manages optional layers in document
+	layer layerRecType // manages optional layers in document
 
 	attachments     []Attachment    // slice of content to embed globally
 	blendList       []blendModeType // slice[idx] of alpha transparency modes, 1-based
@@ -747,6 +746,7 @@ type Scribe struct {
 	transformNest int // Number of active transformation contexts
 
 	javascript *string // JavaScript code to include in the PDF
+	writer     io.Writer
 
 	templates       map[string]Template          // templates used in this document
 	templateObjects map[string]uint32            // template object IDs within this document
@@ -791,6 +791,7 @@ type Scribe struct {
 	nXMP               uint32 // XMP object number
 	outlineRoot        uint32 // root of outlines
 	outputIntentStartN uint32 // Start object number for
+	bytesWritten       uint32
 
 	pdfVersion  pdfVersion // PDF version number
 	currentFont FontId     // current font info
