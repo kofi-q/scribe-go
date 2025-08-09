@@ -4185,7 +4185,6 @@ func (f *Scribe) putfonts() {
 	if f.err != nil {
 		return
 	}
-	// nf := f.n
 	for _, diff := range f.diffs {
 		// Encodings
 		f.newobj()
@@ -4504,6 +4503,10 @@ func (f *Scribe) putresourcedict() {
 	f.out("/ProcSet [/PDF /Text /ImageB /ImageC /ImageI]")
 	f.out("/Font <<")
 	for id := range f.fonts.Len() {
+		if f.usedRunes[id].Count() == 0 {
+			continue
+		}
+
 		f.outf("/F%s %d 0 R", f.fonts.Get(ttf.Id(id)), f.fontObjIds[id])
 	}
 	f.out(">>")
