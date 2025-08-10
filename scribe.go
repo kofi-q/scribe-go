@@ -2031,7 +2031,7 @@ func (f *Scribe) SetFont(id FontId, style FontStyle, size float32) {
 	f.fontSize = size / f.k
 	f.currentFont = id
 	if f.page > 0 {
-		f.outf("BT /F%s %g Tf ET", f.currentFontKey(), f.fontSizePt)
+		f.outf("BT /F%d %g Tf ET", f.currentFont, f.fontSizePt)
 	}
 }
 
@@ -2126,7 +2126,7 @@ func (f *Scribe) SetFontSize(size float32) {
 	f.fontSizePt = size
 	f.fontSize = size / f.k
 	if f.page > 0 {
-		f.outf("BT /F%s %g Tf ET", f.font().Key(), f.fontSizePt)
+		f.outf("BT /F%d %g Tf ET", f.currentFont, f.fontSizePt)
 	}
 }
 
@@ -2136,7 +2136,7 @@ func (f *Scribe) SetFontUnitSize(size float32) {
 	f.fontSizePt = size * f.k
 	f.fontSize = size
 	if f.page > 0 {
-		f.outf("BT /F%s %g Tf ET", f.font().Key(), f.fontSizePt)
+		f.outf("BT /F%d %g Tf ET", f.currentFont, f.fontSizePt)
 	}
 }
 
@@ -2927,7 +2927,17 @@ func (f *Scribe) write(lnHeight float32, txt string, link int, linkStr string) {
 					linkStr,
 				)
 			} else {
-				f.CellFormat(w, lnHeight, string([]rune(s)[j:sep]), "", 2, "", false, link, linkStr)
+				f.CellFormat(
+					w,
+					lnHeight,
+					string([]rune(s)[j:sep]),
+					"",
+					2,
+					"",
+					false,
+					link,
+					linkStr,
+				)
 				i = sep + 1
 			}
 			sep = -1
@@ -3014,8 +3024,7 @@ func (f *Scribe) WriteAligned(
 	}
 
 	lines := f.TextSplit(textStr, width)
-	for _, lineBt := range lines {
-		lineStr := string(lineBt)
+	for _, lineStr := range lines {
 		lineWidth := f.GetStringWidth(lineStr)
 
 		switch alignStr {
@@ -3890,7 +3899,7 @@ func (f *Scribe) putstream(b []byte) {
 		f.protect.rc4(uint32(f.n), &b)
 	}
 	f.out("stream")
-	f.out(string(b))
+	f.outBytes(b)
 	f.out("endstream")
 }
 
@@ -3901,6 +3910,16 @@ func (f *Scribe) out(s string) {
 		must(f.pages[f.page].WriteString("\n"))
 	} else {
 		f.println(s)
+	}
+}
+
+func (f *Scribe) outBytes(bytes []byte) {
+	if f.state == 2 {
+		must(f.pages[f.page].Write(bytes))
+		must(f.pages[f.page].WriteString("\n"))
+	} else {
+		f.print(bytes)
+		f.print([]byte{'\n'})
 	}
 }
 
@@ -4200,6 +4219,8 @@ CMapName currentdict /CMap defineresource pop
 end
 end`
 
+const cidSystemInfo = `<</Registry (Adobe) /Ordering (UCS) /Supplement 0>> `
+
 func (f *Scribe) putfonts() {
 	if f.err != nil {
 		return
@@ -4218,6 +4239,11 @@ func (f *Scribe) putfonts() {
 		toUnicodeObjId := f.n
 		f.out("<</Length " + strconv.Itoa(len(toUnicode)) + " >>")
 		f.putstream([]byte(toUnicode))
+		f.out("endobj")
+
+		f.newobj()
+		cidSystemInfoObjId := f.n
+		f.out(cidSystemInfo)
 		f.out("endobj")
 
 		for id := range f.fonts.Len() {
@@ -4264,7 +4290,7 @@ func (f *Scribe) putfonts() {
 				f.out(
 					"<</Type /Font\n/Subtype /CIDFontType2\n/BaseFont /" + fontName + "\n" +
 						"/CIDSystemInfo " + strconv.Itoa(
-						int(toUnicodeObjId),
+						int(cidSystemInfoObjId),
 					) + " 0 R\n/FontDescriptor " + strconv.Itoa(
 						int(f.n)+1,
 					) + " 0 R",
@@ -4525,7 +4551,7 @@ func (f *Scribe) putresourcedict() {
 			continue
 		}
 
-		f.outf("/F%s %d 0 R", f.fonts.Get(ttf.Id(id)), f.fontObjIds[id])
+		f.outf("/F%d %d 0 R", id, f.fontObjIds[id])
 	}
 	f.out(">>")
 	f.out("/XObject <<")
@@ -4758,7 +4784,7 @@ func (f *Scribe) putcatalog() {
 
 func (f *Scribe) putheader() {
 	f.outf("%%PDF-%s", f.pdfVersion)
-	f.out("%µ¶")
+	f.out("%\xc0\xc0\xc0")
 }
 
 func (f *Scribe) puttrailer() {
