@@ -3944,14 +3944,22 @@ func (f *Scribe) putUtf16(s string) {
 
 	buf := [2]byte{}
 	for _, char := range s {
-		switch char {
-		case '\\', '(', ')', '\r':
-			binary.BigEndian.PutUint16(buf[:], uint16('\\'))
-			f.putBytes(buf[:])
-			f.putByte(uint8(char))
-		default:
-			binary.BigEndian.PutUint16(buf[:], uint16(char))
-			f.putBytes(buf[:])
+		binary.BigEndian.PutUint16(buf[:], uint16(char))
+
+		// Escape special bytes before appending to the buffer.
+		// [TODO] See if \b and \f are needed - not escaping them doesn't seem
+		// to affect readers
+		for _, b := range buf {
+			switch b {
+			case '\\', '(', ')':
+				f.putByte('\\')
+				f.putByte(b)
+			case '\r':
+				f.putByte('\\')
+				f.putByte('r')
+			default:
+				f.putByte(b)
+			}
 		}
 	}
 }
