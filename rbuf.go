@@ -5,60 +5,42 @@
 package scribe
 
 import (
-	"bytes"
 	"encoding/binary"
 	"io"
 )
 
 type rbuffer struct {
-	p []byte
-	c int
-}
-
-// newRBuffer returns a new buffer populated with the contents of the specified Reader
-func newRBuffer(r io.Reader) (b *rbuffer, err error) {
-	buf := new(bytes.Buffer)
-	_, err = buf.ReadFrom(r)
-	b = &rbuffer{p: buf.Bytes()}
-	return
+	src io.Reader
 }
 
 func (r *rbuffer) Read(p []byte) (int, error) {
-	if r.c >= len(r.p) {
-		return 0, io.EOF
-	}
-	n := copy(p, r.p[r.c:])
-	r.c += n
-	return n, nil
+	return r.src.Read(p)
 }
 
 func (r *rbuffer) ReadByte() (byte, error) {
-	if r.c >= len(r.p) {
-		return 0, io.EOF
-	}
-	v := r.p[r.c]
-	r.c++
-	return v, nil
+	sink := [1]byte{}
+	_, err := r.src.Read(sink[:1])
+	return sink[0], err
 }
 
 func (r *rbuffer) u8() uint8 {
-	if r.c >= len(r.p) {
-		panic(io.ErrShortBuffer)
+	b, err := r.ReadByte()
+	if err != nil {
+		// [TODO] Preserving previous behaviour for now - update to return err
+		panic(err)
 	}
-	v := r.p[r.c]
-	r.c++
-	return v
+
+	return b
 }
 
 func (r *rbuffer) u32() uint32 {
-	const n = 4
-	if r.c+n >= len(r.p) {
-		panic(io.ErrShortBuffer)
+	buf := [4]byte{}
+	if _, err := r.Read(buf[:]); err != nil {
+		// [TODO] Preserving previous behaviour for now - update to return err
+		panic(err)
 	}
-	beg := r.c
-	r.c += n
-	v := binary.BigEndian.Uint32(r.p[beg:])
-	return v
+
+	return binary.BigEndian.Uint32(buf[:])
 }
 
 func (r *rbuffer) i32() int32 {
@@ -66,7 +48,11 @@ func (r *rbuffer) i32() int32 {
 }
 
 func (r *rbuffer) Next(n int) []byte {
-	c := r.c
-	r.c += n
-	return r.p[c:r.c]
+	buf := make([]byte, n)
+	if _, err := r.Read(buf[:]); err != nil {
+		// [TODO] Preserving previous behaviour for now - update to return err
+		panic(err)
+	}
+
+	return buf[:]
 }

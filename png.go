@@ -41,7 +41,10 @@ func (f *Scribe) pngColorSpace(ct byte) (colspace string, colorVal int) {
 	return
 }
 
-func (f *Scribe) parsepngstream(r *rbuffer, readdpi bool) (info *ImageInfoType) {
+func (f *Scribe) parsepngstream(
+	r *rbuffer,
+	readdpi bool,
+) (info *ImageInfoType) {
 	info = f.newImageInfo()
 	// 	Check signature
 	if string(r.Next(8)) != "\x89PNG\x0d\x0a\x1a\x0a" {
@@ -82,7 +85,7 @@ func (f *Scribe) parsepngstream(r *rbuffer, readdpi bool) (info *ImageInfoType) 
 		return
 	}
 	_ = r.Next(4)
-	dp := sprintf(
+	dp := fmt.Sprintf(
 		"/Predictor 15 /Colors %d /BitsPerComponent %d /Columns %d",
 		colorVal,
 		bpc,

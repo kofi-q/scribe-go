@@ -144,9 +144,9 @@ func (f *Scribe) UseTemplateScaled(
 	}
 
 	// Create a list of existing image SHA-1 hashes.
-	existingImages := map[string]bool{}
+	existingImages := map[string]struct{}{}
 	for _, image := range f.images {
-		existingImages[image.i] = true
+		existingImages[image.i] = struct{}{}
 	}
 
 	// Add each template image to $f, unless already present.
@@ -235,36 +235,6 @@ func (f *Scribe) putTemplates() {
 		// Template's resource dictionary
 		f.out("/Resources ")
 		f.out("<</ProcSet [/PDF /Text /ImageB /ImageC /ImageI]")
-
-		// f.templateFontCatalog(t)
-
-		// tImages := t.Images()
-		// tTemplates := t.Templates()
-		// if len(tImages) > 0 || len(tTemplates) > 0 {
-		// 	f.out("/XObject <<")
-		// 	{
-		// 		var key string
-		// 		var keyList []string
-		// 		var ti *ImageInfoType
-		// 		for key = range tImages {
-		// 			keyList = append(keyList, key)
-		// 		}
-		// 		if f.catalogSort {
-		// 			slices.Sort(keyList)
-		// 		}
-		// 		for _, key = range keyList {
-		// 			ti = tImages[key]
-		// 			f.outf("/I%s %d 0 R", ti.i, ti.n)
-		// 		}
-		// 	}
-		// 	for _, tt := range tTemplates {
-		// 		id := tt.ID()
-		// 		if objID, ok := f.templateObjects[id]; ok {
-		// 			f.outf("/TPL%s %d 0 R", id, objID)
-		// 		}
-		// 	}
-		// 	f.out(">>")
-		// }
 
 		f.out(">>")
 

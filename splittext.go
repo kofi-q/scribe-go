@@ -23,6 +23,14 @@ func (f *Scribe) TextSplit(text string, width float32) (lines []string) {
 
 	widthMax := int(math.Ceil(float64((width) * 1000 / font.fontSizePt)))
 
+	defaultGlyphWidth := f.font().GlyphWidthOnly(0xffff)
+	lineCountEstimate := int(
+		math.Ceil(
+			float64(len(text)*int(defaultGlyphWidth)) / float64(widthMax),
+		),
+	)
+	lines = make([]string, 0, lineCountEstimate)
+
 	ixChar := 0
 	ixBreak := -1
 	ixBreakIsSpace := true

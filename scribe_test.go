@@ -30,6 +30,7 @@ import (
 
 	scribe "github.com/kofi-q/scribe-go"
 	"github.com/kofi-q/scribe-go/internal/example"
+	"github.com/kofi-q/scribe-go/ttf"
 )
 
 func init() {
@@ -72,7 +73,7 @@ func TestFpdfImplementPdf(t *testing.T) {
 
 // TestPagedTemplate ensures new paged templates work
 func TestPagedTemplate(t *testing.T) {
-	pdf := scribe.New("P", "mm", scribe.PageSizeA4, "")
+	pdf := scribe.New("P", "mm", scribe.PageSizeA4, &ttf.FontSet{})
 	tpl := pdf.CreateTemplate(func(t *scribe.Tpl) {
 		// this will be the second page, as a page is already
 		// created by default
@@ -112,7 +113,7 @@ func TestPagedTemplate(t *testing.T) {
 // TestIssue0116 addresses issue 116 in which library silently fails after
 // calling CellFormat when no font has been set.
 func TestIssue0116(t *testing.T) {
-	pdf := scribe.New("P", "mm", scribe.PageSizeA4, "")
+	pdf := scribe.New("P", "mm", scribe.PageSizeA4, &ttf.FontSet{})
 	pdf.AddPage()
 	pdf.SetFont("Arial", scribe.FontStyleB, 16)
 	pdf.Cell(40, 10, "OK")
@@ -120,7 +121,7 @@ func TestIssue0116(t *testing.T) {
 		t.Fatalf("not expecting error when rendering text")
 	}
 
-	pdf = scribe.New("P", "mm", scribe.PageSizeA4, "")
+	pdf = scribe.New("P", "mm", scribe.PageSizeA4, &ttf.FontSet{})
 	pdf.AddPage()
 	pdf.Cell(40, 10, "Not OK") // Font not set
 	if pdf.Error() == nil {
@@ -139,7 +140,7 @@ func TestIssue0193(t *testing.T) {
 	png, err = os.ReadFile(example.ImageFile("sweden.png"))
 	if err == nil {
 		rdr = bytes.NewReader(png)
-		pdf = scribe.New("P", "mm", scribe.PageSizeA4, "")
+		pdf = scribe.New("P", "mm", scribe.PageSizeA4, &ttf.FontSet{})
 		pdf.AddPage()
 		_ = pdf.RegisterImageOptionsReader(
 			"sweden",
@@ -157,7 +158,7 @@ func TestIssue0193(t *testing.T) {
 // TestIssue0209SplitLinesEqualMultiCell addresses issue 209
 // make SplitLines and MultiCell split at the same place
 func TestIssue0209SplitLinesEqualMultiCell(t *testing.T) {
-	pdf := scribe.New("P", "mm", scribe.PageSizeA4, "")
+	pdf := scribe.New("P", "mm", scribe.PageSizeA4, &ttf.FontSet{})
 	pdf.AddPage()
 	pdf.SetFont("Arial", scribe.FontStyleNone, 8)
 	// this sentence should not be splited
@@ -201,7 +202,7 @@ func TestIssue0209SplitLinesEqualMultiCell(t *testing.T) {
 // TestFooterFuncLpi tests to make sure the footer is not call twice and SetFooterFuncLpi can work
 // without SetFooterFunc.
 func TestFooterFuncLpi(t *testing.T) {
-	pdf := scribe.New("P", "mm", scribe.PageSizeA4, "")
+	pdf := scribe.New("P", "mm", scribe.PageSizeA4, &ttf.FontSet{})
 	var (
 		oldFooterFnc  = "oldFooterFnc"
 		bothPages     = "bothPages"
@@ -288,7 +289,7 @@ func TestIssue0069PanicOnSplitTextWithUnicode(t *testing.T) {
 		}
 	}()
 
-	pdf := scribe.New("P", "mm", scribe.PageSizeA4, "")
+	pdf := scribe.New("P", "mm", scribe.PageSizeA4, &ttf.FontSet{})
 	pdf.AddPage()
 	pdf.SetFont("Arial", scribe.FontStyleNone, 8)
 
@@ -309,7 +310,7 @@ func TestSplitTextHandleCharacterNotInFontRange(t *testing.T) {
 		}
 	}()
 
-	pdf := scribe.New("P", "mm", scribe.PageSizeA4, "")
+	pdf := scribe.New("P", "mm", scribe.PageSizeA4, &ttf.FontSet{})
 	pdf.AddPage()
 	pdf.SetFont("Arial", scribe.FontStyleNone, 8)
 
@@ -340,7 +341,7 @@ func TestAFMFontParser(t *testing.T) {
 }
 
 func BenchmarkLineTo(b *testing.B) {
-	pdf := scribe.New("P", "mm", scribe.PageSizeA4, "")
+	pdf := scribe.New("P", "mm", scribe.PageSizeA4, &ttf.FontSet{})
 	pdf.AddPage()
 
 	b.ResetTimer()
@@ -350,7 +351,7 @@ func BenchmarkLineTo(b *testing.B) {
 }
 
 func BenchmarkCurveTo(b *testing.B) {
-	pdf := scribe.New("P", "mm", scribe.PageSizeA4, "")
+	pdf := scribe.New("P", "mm", scribe.PageSizeA4, &ttf.FontSet{})
 	pdf.AddPage()
 
 	b.ResetTimer()

@@ -26,6 +26,7 @@ package scribe
 // Port to Go: Kurt Jung, 2013-07-15
 
 import (
+	"bufio"
 	"bytes"
 	"cmp"
 	"encoding/binary"
@@ -85,11 +86,8 @@ func scribeNew(
 	}
 	f.page = 0
 	f.n = 2
-	f.pages = make([]*bytes.Buffer, 0, 8)
-	f.pages = append(
-		f.pages,
-		bytes.NewBufferString(""),
-	) // pages[0] is unused (1-based)
+	f.pages = make([]*bytes.Buffer, 1, 8)
+	f.pages[0] = bytes.NewBufferString("") // pages[0] is unused (1-based)
 	f.pageSizes = make(map[int]PageSize)
 	f.pageBoxes = make(map[int]map[string]PageBox)
 	f.defPageBoxes = make(map[string]PageBox)
@@ -97,26 +95,27 @@ func scribeNew(
 	f.diffs = make([]string, 0, 8)
 	f.templates = make(map[string]Template)
 	f.templateObjects = make(map[string]uint32)
+	f.xobjects = make([]xobject, 0)
+	f.xobjectsUsed = make([]bool, 0)
 	f.importedObjs = make(map[string][]byte)
 	f.importedObjPos = make(map[string]map[uint32]string)
 	f.importedTplObjs = make(map[string]string)
 	f.importedTplIDs = make(map[string]uint32)
 	f.images = make(map[string]*ImageInfoType)
-	f.pageLinks = make([][]linkType, 0, 8)
+	f.pageLinks = make([][]linkType, 0)
 	f.pageLinks = append(
 		f.pageLinks,
 		make([]linkType, 0),
 	) // pageLinks[0] is unused (1-based)
-	f.links = make([]intLinkType, 0, 8)
+	f.links = make([]intLinkType, 0)
 	f.links = append(f.links, intLinkType{}) // links[0] is unused (1-based)
-	f.pageAttachments = make([][]annotationAttach, 0, 8)
-	f.pageAttachments = append(f.pageAttachments, []annotationAttach{}) //
+	f.pageAttachments = make([][]annotationAttach, 1, 8)
+	f.pageAttachments[0] = []annotationAttach{} //
 	f.aliasMap = make(map[string]string)
 	f.inHeader = false
 	f.inFooter = false
 	f.lasth = 0
 	f.fontStyle = ttf.StyleNone
-	f.SetFontSize(12)
 	f.setDrawColor(0, 0, 0)
 	f.setFillColor(0, 0, 0)
 	f.setTextColor(0, 0, 0)
@@ -611,9 +610,6 @@ func (f *Scribe) GetTitle() string {
 // SetTitle defines the title of the document. isUTF8 indicates if the string
 // is encoded in ISO-8859-1 (false) or UTF-8 (true).
 func (f *Scribe) SetTitle(titleStr string, isUTF8 bool) {
-	if isUTF8 {
-		titleStr = utf8toutf16(titleStr)
-	}
 	f.title = titleStr
 }
 
@@ -625,9 +621,6 @@ func (f *Scribe) GetSubject() string {
 // SetSubject defines the subject of the document. isUTF8 indicates if the
 // string is encoded in ISO-8859-1 (false) or UTF-8 (true).
 func (f *Scribe) SetSubject(subjectStr string, isUTF8 bool) {
-	if isUTF8 {
-		subjectStr = utf8toutf16(subjectStr)
-	}
 	f.subject = subjectStr
 }
 
@@ -639,9 +632,6 @@ func (f *Scribe) GetAuthor() string {
 // SetAuthor defines the author of the document. isUTF8 indicates if the string
 // is encoded in ISO-8859-1 (false) or UTF-8 (true).
 func (f *Scribe) SetAuthor(authorStr string, isUTF8 bool) {
-	if isUTF8 {
-		authorStr = utf8toutf16(authorStr)
-	}
 	f.author = authorStr
 }
 
@@ -664,9 +654,6 @@ func (f *Scribe) GetKeywords() string {
 // space-delimited string, for example "invoice August". isUTF8 indicates if
 // the string is encoded
 func (f *Scribe) SetKeywords(keywordsStr string, isUTF8 bool) {
-	if isUTF8 {
-		keywordsStr = utf8toutf16(keywordsStr)
-	}
 	f.keywords = keywordsStr
 }
 
@@ -678,9 +665,6 @@ func (f *Scribe) GetCreator() string {
 // SetCreator defines the creator of the document. isUTF8 indicates if the
 // string is encoded in ISO-8859-1 (false) or UTF-8 (true).
 func (f *Scribe) SetCreator(creatorStr string, isUTF8 bool) {
-	if isUTF8 {
-		creatorStr = utf8toutf16(creatorStr)
-	}
 	f.creator = creatorStr
 }
 
@@ -827,13 +811,15 @@ func (f *Scribe) AddPageFormat(orientationStr string, size PageSize) {
 	// Start new page
 	f.beginpage(orientationStr, size)
 	// 	Set line cap style to current value
-	// f.out("2 J")
-	f.outf("%d J", f.capStyle)
+	f.put(strconv.Itoa(f.capStyle))
+	f.out(" J")
 	// 	Set line join style to current value
-	f.outf("%d j", f.joinStyle)
+	f.put(strconv.Itoa(f.joinStyle))
+	f.out(" j")
 	// Set line width
 	f.lineWidth = lw
-	f.outf("%g w", lw*f.k)
+	f.put(f.fmtF64(lw, -1))
+	f.out(" w")
 	// Set dash pattern
 	if len(f.dashArray) > 0 {
 		f.outputDashPattern()
@@ -951,7 +937,7 @@ func (f *Scribe) SetDrawColor(r, g, b uint8) {
 
 func (f *Scribe) setDrawColor(r, g, b uint8) {
 	f.color.draw = f.rgbColorValue(r, g, b, "G", "RG")
-	if f.page > 0 {
+	if f.page > 0 || f.state == 4 {
 		f.out(f.color.draw.str)
 	}
 }
@@ -974,7 +960,7 @@ func (f *Scribe) SetFillColor(r, g, b uint8) {
 func (f *Scribe) setFillColor(r, g, b uint8) {
 	f.color.fill = f.rgbColorValue(r, g, b, "g", "rg")
 	f.colorFlag = f.color.fill.str != f.color.text.str
-	if f.page > 0 {
+	if f.page > 0 || f.state == 4 {
 		f.out(f.color.fill.str)
 	}
 }
@@ -1015,26 +1001,17 @@ type TextParams struct {
 // GetStringWidth returns the length of a string in user units. A font must be
 // currently selected.
 func (f *Scribe) GetStringWidth(s string) float32 {
-	if f.err != nil {
-		return 0
-	}
-	w := f.GetStringSymbolWidth(s)
-	return float32(w) * f.fontSize / 1000
+	return float32(f.GetStringSymbolWidth(s)) * f.fontSize / 1000
 }
 
 // GetStringSymbolWidth returns the length of a string in glyf units. A font must be
 // currently selected.
 func (f *Scribe) GetStringSymbolWidth(str string) float32 {
-	if f.err != nil {
-		return 0
-	}
-
 	font := f.font()
 
 	var total float32 = 0
 	for _, c := range str {
-		_, width := font.GlyphWidth(c)
-		total += width
+		total += font.GlyphWidthOnly(c)
 	}
 
 	return total
@@ -1049,8 +1026,9 @@ func (f *Scribe) SetLineWidth(width float32) {
 
 func (f *Scribe) setLineWidth(width float32) {
 	f.lineWidth = width
-	if f.page > 0 {
-		f.out(f.fmtF64(width*f.k, -1) + " w")
+	if f.page > 0 || f.state == 4 {
+		f.put(f.fmtF64(width, -1))
+		f.out(" w")
 	}
 }
 
@@ -1087,7 +1065,8 @@ func (f *Scribe) SetLineCapStyle(style string) {
 	}
 	f.capStyle = capStyle
 	if f.page > 0 {
-		f.outf("%d J", f.capStyle)
+		f.put(strconv.Itoa(f.capStyle))
+		f.out(" J")
 	}
 }
 
@@ -1118,7 +1097,8 @@ func (f *Scribe) SetLineJoinStyle(style string) {
 	}
 	f.joinStyle = joinStyle
 	if f.page > 0 {
-		f.outf("%d j", f.joinStyle)
+		f.put(strconv.Itoa(f.joinStyle))
+		f.out(" j")
 	}
 }
 
@@ -1163,40 +1143,20 @@ func (f *Scribe) outputDashPattern() {
 // Line draws a line between points (x1, y1) and (x2, y2) using the current
 // draw color, line width and cap style.
 func (f *Scribe) Line(x1, y1, x2, y2 float32) {
-	// f.outf("%g %g m %g %g l S", x1*f.k, (f.h-y1)*f.k, x2*f.k, (f.h-y2)*f.k)
 	const prec = -1
-	f.putF64(x1*f.k, prec)
+	f.putF64(x1, prec)
 	f.put(" ")
-	f.putF64((f.h-y1)*f.k, prec)
+	f.putF64((f.h - y1), prec)
 	f.put(" m ")
-	f.putF64(x2*f.k, prec)
+	f.putF64(x2, prec)
 	f.put(" ")
-	f.putF64((f.h-y2)*f.k, prec)
+	f.putF64((f.h - y2), prec)
 	f.put(" l S\n")
 }
 
 // fillDrawOp corrects path painting operators
-func fillDrawOp(style string) (opStr string) {
-	switch strings.ToUpper(style) {
-	case "", "D":
-		// Stroke the path.
-		opStr = "S"
-	case "F":
-		// fill the path, using the nonzero winding number rule
-		opStr = "f"
-	case "F*":
-		// fill the path, using the even-odd rule
-		opStr = "f*"
-	case "FD", "DF":
-		// fill and then stroke the path, using the nonzero winding number rule
-		opStr = "B"
-	case "FD*", "DF*":
-		// fill and then stroke the path, using the even-odd rule
-		opStr = "B*"
-	default:
-		opStr = style
-	}
-	return
+func fillDrawOp(style string) string {
+	return style
 }
 
 // Rect outputs a rectangle of width w and height h with the upper left corner
@@ -1208,16 +1168,17 @@ func fillDrawOp(style string) (opStr string) {
 // draw color and line width centered on the rectangle's perimeter. Filling
 // uses the current fill color.
 func (f *Scribe) Rect(x, y, w, h float32, style string) {
-	// f.outf("%g %g %g %g re %s", x*f.k, (f.h-y)*f.k, w*f.k, -h*f.k, fillDrawOp(style))
 	const prec = -1
-	f.putF64(x*f.k, prec)
+	f.putF64(x, prec)
 	f.put(" ")
-	f.putF64((f.h-y)*f.k, prec)
+	f.putF64((f.h - y), prec)
 	f.put(" ")
-	f.putF64(w*f.k, prec)
+	f.putF64(w, prec)
 	f.put(" ")
-	f.putF64(-h*f.k, prec)
-	f.put(" re " + fillDrawOp(style) + "\n")
+	f.putF64(-h, prec)
+	f.put(" re ")
+	f.put(style)
+	f.put("\n")
 }
 
 type RectLineWidth struct {
@@ -1314,17 +1275,15 @@ func (f *Scribe) Polygon(points []PointType, style string) {
 			if j == 0 {
 				f.point(pt.X, pt.Y)
 			} else {
-				// f.outf("%g %g l ", pt.X*f.k, (f.h-pt.Y)*f.k)
-				f.putF64(pt.X*f.k, prec)
+				f.putF64(pt.X, prec)
 				f.put(" ")
-				f.putF64((f.h-pt.Y)*f.k, prec)
+				f.putF64((f.h - pt.Y), prec)
 				f.put(" l \n")
 			}
 		}
-		// f.outf("%g %g l ", points[0].X*f.k, (f.h-points[0].Y)*f.k)
-		f.putF64(points[0].X*f.k, prec)
+		f.putF64(points[0].X, prec)
 		f.put(" ")
-		f.putF64((f.h-points[0].Y)*f.k, prec)
+		f.putF64((f.h - points[0].Y), prec)
 		f.put(" l \n")
 		f.DrawPath(style)
 	}
@@ -1364,30 +1323,28 @@ func (f *Scribe) Beziergon(points []PointType, style string) {
 
 // point outputs current point
 func (f *Scribe) point(x, y float32) {
-	// f.outf("%g %g m", x*f.k, (f.h-y)*f.k)
-	f.putF64(x*f.k, 4)
+	f.putF64(x, 4)
 	f.put(" ")
-	f.putF64((f.h-y)*f.k, 4)
+	f.putF64((f.h - y), 4)
 	f.put(" m\n")
 }
 
 // curve outputs a single cubic Bézier curve segment from current point
 func (f *Scribe) curve(cx0, cy0, cx1, cy1, x, y float32) {
 	// Thanks, Robert Lillack, for straightening this out
-	// f.outf("%g %g %g %g %g %g c", cx0*f.k, (f.h-cy0)*f.k, cx1*f.k,
-	// 	(f.h-cy1)*f.k, x*f.k, (f.h-y)*f.k)
+	// 	(f.h-cy1), x, (f.h-y))
 	const prec = -1
-	f.putF64(cx0*f.k, prec)
+	f.putF64(cx0, prec)
 	f.put(" ")
-	f.putF64((f.h-cy0)*f.k, prec)
+	f.putF64((f.h - cy0), prec)
 	f.put(" ")
-	f.putF64(cx1*f.k, prec)
+	f.putF64(cx1, prec)
 	f.put(" ")
-	f.putF64((f.h-cy1)*f.k, prec)
+	f.putF64((f.h - cy1), prec)
 	f.put(" ")
-	f.putF64(x*f.k, prec)
+	f.putF64(x, prec)
 	f.put(" ")
-	f.putF64((f.h-y)*f.k, prec)
+	f.putF64((f.h - y), prec)
 	f.put(" c\n")
 }
 
@@ -1406,16 +1363,15 @@ func (f *Scribe) curve(cx0, cy0, cx1, cy1, x, y float32) {
 // The Circle() example demonstrates this method.
 func (f *Scribe) Curve(x0, y0, cx, cy, x1, y1 float32, style string) {
 	f.point(x0, y0)
-	// f.outf("%g %g %g %g v %s", cx*f.k, (f.h-cy)*f.k, x1*f.k, (f.h-y1)*f.k,
 	// 	fillDrawOp(style))
 	const prec = -1
-	f.putF64(cx*f.k, prec)
+	f.putF64(cx, prec)
 	f.put(" ")
-	f.putF64((f.h-cy)*f.k, prec)
+	f.putF64((f.h - cy), prec)
 	f.put(" ")
-	f.putF64(x1*f.k, prec)
+	f.putF64(x1, prec)
 	f.put(" ")
-	f.putF64((f.h-y1)*f.k, prec)
+	f.putF64((f.h - y1), prec)
 	f.put(" v " + fillDrawOp(style) + "\n")
 }
 
@@ -1427,8 +1383,7 @@ func (f *Scribe) CurveCubic(
 	style string,
 ) {
 	// f.point(x0, y0)
-	// f.outf("%g %g %g %g %g %g c %s", cx0*f.k, (f.h-cy0)*f.k,
-	// cx1*f.k, (f.h-cy1)*f.k, x1*f.k, (f.h-y1)*f.k, fillDrawOp(style))
+	// cx1, (f.h-cy1), x1, (f.h-y1), fillDrawOp(style))
 	f.CurveBezierCubic(x0, y0, cx0, cy0, cx1, cy1, x1, y1, style)
 }
 
@@ -1453,20 +1408,20 @@ func (f *Scribe) CurveBezierCubic(
 	style string,
 ) {
 	f.point(x0, y0)
-	//	f.outf("%g %g %g %g %g %g c %s", cx0*f.k, (f.h-cy0)*f.k,
-	//		cx1*f.k, (f.h-cy1)*f.k, x1*f.k, (f.h-y1)*f.k, fillDrawOp(style))
+	//	f.outf("%g %g %g %g %g %g c %s", cx0, (f.h-cy0),
+	//		cx1, (f.h-cy1), x1, (f.h-y1), fillDrawOp(style))
 	const prec = -1
-	f.putF64(cx0*f.k, prec)
+	f.putF64(cx0, prec)
 	f.put(" ")
-	f.putF64((f.h-cy0)*f.k, prec)
+	f.putF64((f.h - cy0), prec)
 	f.put(" ")
-	f.putF64(cx1*f.k, prec)
+	f.putF64(cx1, prec)
 	f.put(" ")
-	f.putF64((f.h-cy1)*f.k, prec)
+	f.putF64((f.h - cy1), prec)
 	f.put(" ")
-	f.putF64(x1*f.k, prec)
+	f.putF64(x1, prec)
 	f.put(" ")
-	f.putF64((f.h-y1)*f.k, prec)
+	f.putF64((f.h - y1), prec)
 	f.put(" c " + fillDrawOp(style) + "\n")
 }
 
@@ -1557,28 +1512,26 @@ func (f *Scribe) gradientClipStart(x, y, w, h float32) {
 	{
 		const prec = -1
 		// Save current graphic state and set clipping area
-		// f.outf("q %g %g %g %g re W n", x*f.k, (f.h-y)*f.k, w*f.k, -h*f.k)
 		f.put("q ")
-		f.putF64(x*f.k, prec)
+		f.putF64(x, prec)
 		f.put(" ")
-		f.putF64((f.h-y)*f.k, prec)
+		f.putF64((f.h - y), prec)
 		f.put(" ")
-		f.putF64(w*f.k, prec)
+		f.putF64(w, prec)
 		f.put(" ")
-		f.putF64(-h*f.k, prec)
+		f.putF64(-h, prec)
 		f.put(" re W n\n")
 	}
 	{
 		const prec = -1
 		// Set up transformation matrix for gradient
-		// f.outf("%g 0 0 %g %g %g cm", w*f.k, h*f.k, x*f.k, (f.h-(y+h))*f.k)
-		f.putF64(w*f.k, prec)
+		f.putF64(w, prec)
 		f.put(" 0 0 ")
-		f.putF64(h*f.k, prec)
+		f.putF64(h, prec)
 		f.put(" ")
-		f.putF64(x*f.k, prec)
+		f.putF64(x, prec)
 		f.put(" ")
-		f.putF64((f.h-(y+h))*f.k, prec)
+		f.putF64((f.h - (y + h)), prec)
 		f.put(" cm\n")
 	}
 }
@@ -1666,16 +1619,15 @@ func (f *Scribe) RadialGradient(
 // This ClipText() example demonstrates this method.
 func (f *Scribe) ClipRect(x, y, w, h float32, outline bool) {
 	f.clipNest++
-	// f.outf("q %g %g %g %g re W %s", x*f.k, (f.h-y)*f.k, w*f.k, -h*f.k, strIf(outline, "S", "n"))
 	const prec = -1
 	f.put("q ")
-	f.putF64(x*f.k, prec)
+	f.putF64(x, prec)
 	f.put(" ")
-	f.putF64((f.h-y)*f.k, prec)
+	f.putF64((f.h - y), prec)
 	f.put(" ")
-	f.putF64(w*f.k, prec)
+	f.putF64(w, prec)
 	f.put(" ")
-	f.putF64(-h*f.k, prec)
+	f.putF64(-h, prec)
 	f.put(" re W " + strIf(outline, "S", "n") + "\n")
 }
 
@@ -1689,12 +1641,11 @@ func (f *Scribe) ClipRect(x, y, w, h float32, outline bool) {
 // restore unclipped operations.
 func (f *Scribe) ClipText(x, y float32, txtStr string, outline bool) {
 	f.clipNest++
-	// f.outf("q BT %g %g Td %d Tr (%s) Tj ET", x*f.k, (f.h-y)*f.k, intIf(outline, 5, 7), f.escape(txtStr))
 	const prec = -1
 	f.put("q BT ")
-	f.putF64(x*f.k, prec)
+	f.putF64(x, prec)
 	f.put(" ")
-	f.putF64((f.h-y)*f.k, prec)
+	f.putF64((f.h - y), prec)
 	f.put(" Td ")
 	f.putInt(intIf(outline, 5, 7))
 	f.put(" Tr (")
@@ -1704,20 +1655,19 @@ func (f *Scribe) ClipText(x, y float32, txtStr string, outline bool) {
 
 func (f *Scribe) clipArc(x1, y1, x2, y2, x3, y3 float32) {
 	h := f.h
-	// f.outf("%g %g %g %g %g %g c ", x1*f.k, (h-y1)*f.k,
-	// 	x2*f.k, (h-y2)*f.k, x3*f.k, (h-y3)*f.k)
+	// 	x2, (h-y2), x3, (h-y3))
 	const prec = -1
-	f.putF64(x1*f.k, prec)
+	f.putF64(x1, prec)
 	f.put(" ")
-	f.putF64((h-y1)*f.k, prec)
+	f.putF64((h - y1), prec)
 	f.put(" ")
-	f.putF64(x2*f.k, prec)
+	f.putF64(x2, prec)
 	f.put(" ")
-	f.putF64((h-y2)*f.k, prec)
+	f.putF64((h - y2), prec)
 	f.put(" ")
-	f.putF64(x3*f.k, prec)
+	f.putF64(x3, prec)
 	f.put(" ")
-	f.putF64((h-y3)*f.k, prec)
+	f.putF64((h - y3), prec)
 	f.put(" c \n")
 }
 
@@ -1755,7 +1705,6 @@ func (f *Scribe) roundedRectPath(x, y, w, h, rTL, rTR, rBR, rBL float32) {
 	k := f.k
 	hp := f.h
 	var myArc float64 = (4.0 / 3.0) * (math.Sqrt2 - 1.0)
-	// f.outf("q %g %g m", (x+rTL)*k, (hp-y)*k)
 	const prec = -1
 	f.put("q ")
 	f.putF64((x+rTL)*k, prec)
@@ -2031,7 +1980,11 @@ func (f *Scribe) SetFont(id FontId, style FontStyle, size float32) {
 	f.fontSize = size / f.k
 	f.currentFont = id
 	if f.page > 0 {
-		f.outf("BT /F%d %g Tf ET", f.currentFont, f.fontSizePt)
+		f.put("BT /F")
+		f.put(strconv.FormatUint(uint64(f.currentFont), 10))
+		f.put(" ")
+		f.put(f.fmtF64(f.fontSizePt, -1))
+		f.out(" Tf ET")
 	}
 }
 
@@ -2120,23 +2073,13 @@ func (f *Scribe) SetFontStyle(style FontStyle) {
 	f.SetFont(f.currentFont, style, f.fontSizePt)
 }
 
-// SetFontSize defines the size of the current font. Size is specified in
-// points (1/ 72 inch). See also SetFontUnitSize().
-func (f *Scribe) SetFontSize(size float32) {
-	f.fontSizePt = size
-	f.fontSize = size / f.k
-	if f.page > 0 {
-		f.outf("BT /F%d %g Tf ET", f.currentFont, f.fontSizePt)
-	}
-}
-
 // SetFontUnitSize defines the size of the current font. Size is specified in
 // the unit of measure specified in New(). See also SetFontSize().
 func (f *Scribe) SetFontUnitSize(size float32) {
 	f.fontSizePt = size * f.k
 	f.fontSize = size
 	if f.page > 0 {
-		f.outf("BT /F%d %g Tf ET", f.currentFont, f.fontSizePt)
+		f.SetFont(f.currentFont, f.fontStyle, f.fontSizePt)
 	}
 }
 
@@ -2179,7 +2122,7 @@ func (f *Scribe) newLink(x, y, w, h float32, link int, linkStr string) {
 	// f.pageLinks[f.page] = linkList
 	// }
 	f.pageLinks[f.page] = append(f.pageLinks[f.page],
-		linkType{x * f.k, f.hPt - y*f.k, w * f.k, h * f.k, link, linkStr})
+		linkType{x * f.k, f.hPt - y, w * f.k, h * f.k, link, linkStr})
 }
 
 // Link puts a link on a rectangular area of the page. Text or image links are
@@ -2209,7 +2152,7 @@ func (f *Scribe) Bookmark(txtStr string, level int, y float32) {
 	}
 
 	// [TODO] Re-add support for built-in ASCII fonts
-	txtStr = utf8toutf16(txtStr)
+	txtStr = f.utf8toutf16(txtStr)
 
 	f.outlines = append(
 		f.outlines,
@@ -2238,13 +2181,13 @@ func (f *Scribe) Text(x, y float32, txtStr string) {
 		x -= f.GetStringWidth(txtStr)
 	}
 
-	txt2 = f.escape(utf8toutf16(txtStr, false))
+	txt2 = f.utf8toutf16(txtStr, false)
 
 	for _, uni := range txtStr {
 		f.usedRunes[f.currentFont].Set(uint(uni))
 	}
 
-	s := sprintf("BT %g %g Td (%s) Tj ET", x*f.k, (f.h-y)*f.k, txt2)
+	s := sprintf("BT %g %g Td (%s) Tj ET", x, (f.h - y), txt2)
 
 	if f.fontStyle.Underline() && txtStr != "" {
 		s += " " + f.dounderline(x, y, txtStr)
@@ -2270,7 +2213,7 @@ func (f *Scribe) GetWordSpacing() float32 {
 // WriteAligned() example for a demonstration of its use.
 func (f *Scribe) SetWordSpacing(space float32) {
 	f.ws = space
-	f.out(sprintf("%g Tw", space*f.k))
+	f.out(sprintf("%g Tw", space))
 }
 
 // SetTextRenderingMode sets the rendering mode of following text.
@@ -2353,21 +2296,18 @@ func (f *Scribe) CellFormat(
 	link int,
 	linkStr string,
 ) {
-	// dbg("CellFormat. h = %g, borderStr = %s", h, borderStr)
 	if f.err != nil {
 		return
 	}
 
 	font := f.font()
 
-	borderStr = strings.ToUpper(borderStr)
 	k := f.k
 	if f.y+height > f.pageBreakTrigger && !f.inHeader && !f.inFooter &&
 		f.acceptPageBreak() {
 		// Automatic page break
 		x := f.x
 		ws := f.ws
-		// dbg("auto page break, x %g, ws %g", x, ws)
 		if ws > 0 {
 			f.ws = 0
 			f.out("0 Tw")
@@ -2379,7 +2319,6 @@ func (f *Scribe) CellFormat(
 		f.x = x
 		if ws > 0 {
 			f.ws = ws
-			// f.outf("%g Tw", ws*k)
 			f.putF64(ws*k, 3)
 			f.put(" Tw\n")
 		}
@@ -2387,32 +2326,35 @@ func (f *Scribe) CellFormat(
 	if width == 0 {
 		width = f.w - f.rMargin - f.x
 	}
-	s := newFmtBuffer(128)
+
+	hasContent := false
 	if height > 0 && (fill || borderStr == "1") {
+		hasContent = true
+
 		var op string
 		if fill {
 			if borderStr == "1" {
 				op = "B"
-				// dbg("border is '1', fill")
 			} else {
 				op = "f"
-				// dbg("border is empty, fill")
 			}
 		} else {
-			// dbg("border is '1', no fill")
 			op = "S"
 		}
-		/// dbg("(CellFormat) f.x %g f.k %g", f.x, f.k)
-		s.printf(
-			"%g %g %g %g re %s ",
-			f.x*k,
-			(f.h-f.y)*k,
-			width*k,
-			-height*k,
-			op,
-		)
+		f.put(f.fmtF64(f.x*k, -1))
+		f.put(" ")
+		f.put(f.fmtF64((f.h-f.y)*k, -1))
+		f.put(" ")
+		f.put(f.fmtF64(width*k, -1))
+		f.put(" ")
+		f.put(f.fmtF64(-height*k, -1))
+		f.put(" re ")
+		f.put(op)
+		f.put(" ")
 	}
 	if len(borderStr) > 0 && borderStr != "1" {
+		hasContent = true
+
 		x := f.x
 		y := f.y
 		left := x * k
@@ -2421,19 +2363,20 @@ func (f *Scribe) CellFormat(
 		bottom := (f.h - (y + height)) * k
 
 		if strings.Contains(borderStr, "L") {
-			s.printf("%g %g m %g %g l S ", left, top, left, bottom)
+			f.Line(left, top, left, bottom)
 		}
 		if strings.Contains(borderStr, "T") {
-			s.printf("%g %g m %g %g l S ", left, top, right, top)
+			f.Line(left, top, right, top)
 		}
 		if strings.Contains(borderStr, "R") {
-			s.printf("%g %g m %g %g l S ", right, top, right, bottom)
+			f.Line(right, top, right, bottom)
 		}
 		if strings.Contains(borderStr, "B") {
-			s.printf("%g %g m %g %g l S ", left, bottom, right, bottom)
+			f.Line(left, bottom, right, bottom)
 		}
 	}
 	if len(txtStr) > 0 {
+		hasContent = true
 		var dx, dy float32
 		strGlyphWidth := f.GetStringSymbolWidth(txtStr)
 		strWidth := float32(strGlyphWidth) * f.fontSize / 1000
@@ -2467,9 +2410,11 @@ func (f *Scribe) CellFormat(
 			dy = 0
 		}
 		if f.colorFlag {
-			s.printf("q %s ", f.color.text.str)
+			f.put("q ")
+			f.put(f.color.text.str)
+			f.put(" ")
 		}
-		//If multibyte, Tw has no effect - do word spacing using an adjustment before each space
+		// If multibyte, Tw has no effect - do word spacing using an adjustment before each space
 		if f.ws != 0 || alignStr == "J" {
 			if f.isRTL {
 				txtStr = reverseText(txtStr)
@@ -2478,55 +2423,59 @@ func (f *Scribe) CellFormat(
 			for _, uni := range txtStr {
 				f.usedRunes[f.currentFont].Set(uint(uni))
 			}
-			space := f.escape(utf8toutf16(" ", false))
 			strSize := strGlyphWidth
-			s.printf(
-				"BT 0 Tw %g %g Td [",
-				(f.x+dx)*k,
-				(f.h-(f.y+.5*height+.3*f.fontSize))*k,
-			)
+			f.put("BT 0 Tw ")
+			f.put(f.fmtF64((f.x+dx)*k, -1))
+			f.put(" ")
+			f.put(f.fmtF64((f.h-(f.y+.5*height+.3*f.fontSize))*k, -1))
+			f.put(" Td [")
+
 			t := strings.Split(txtStr, " ")
 			shift := (wmax - strSize) / float32(len(t)-1)
 			numt := len(t)
 			for i := 0; i < numt; i++ {
-				tx := t[i]
-				tx = "(" + f.escape(utf8toutf16(tx, false)) + ")"
-				s.printf("%s ", tx)
+				f.put("(")
+				f.putUtf16(t[i])
+				f.put(")")
+				f.put(" ")
 				if (i + 1) < numt {
-					s.printf("%g(%s) ", -shift, space)
+					f.put(f.fmtF64(-shift, -1))
+					f.putUtf16(" ")
 				}
 			}
-			s.printf("] TJ ET")
+			f.put("] TJ ET")
 		} else {
-			var txt2 string
 			// [TODO] Re-add support for built-in ASCII fonts
+
 			if f.isRTL {
 				txtStr = reverseText(txtStr)
 			}
-			txt2 = f.escape(utf8toutf16(txtStr, false))
+
 			for _, uni := range txtStr {
 				f.usedRunes[f.currentFont].Set(uint(uni))
 			}
+
 			bt := (f.x + dx) * k
 			td := (f.h - (f.y + dy + .5*height + .3*f.fontSize)) * k
-			s.printf("BT %g %g Td (%s)Tj ET", bt, td, txt2)
-			//BT %g %g Td (%s) Tj ET',(f.x+dx)*k,(f.h-(f.y+.5*h+.3*f.FontSize))*k,txt2);
+			f.put("BT ")
+			f.put(f.fmtF64(bt, -1))
+			f.put(" ")
+			f.put(f.fmtF64(td, -1))
+			f.put(" Td (")
+			f.putUtf16(txtStr)
+			f.put(")Tj ET")
 		}
 
 		if f.fontStyle.Underline() {
-			s.printf(
-				" %s",
-				f.dounderline(f.x+dx, f.y+dy+.5*height+.3*f.fontSize, txtStr),
-			)
+			f.put(" ")
+			f.put(f.dounderline(f.x+dx, f.y+dy+.5*height+.3*f.fontSize, txtStr))
 		}
 		if f.fontStyle.Strike() {
-			s.printf(
-				" %s",
-				f.dostrikeout(f.x+dx, f.y+dy+.5*height+.3*f.fontSize, txtStr),
-			)
+			f.put(" ")
+			f.put(f.dostrikeout(f.x+dx, f.y+dy+.5*height+.3*f.fontSize, txtStr))
 		}
 		if f.colorFlag {
-			s.printf(" Q")
+			f.put(" Q")
 		}
 		if link > 0 || len(linkStr) > 0 {
 			f.newLink(
@@ -2539,9 +2488,9 @@ func (f *Scribe) CellFormat(
 			)
 		}
 	}
-	str := s.String()
-	if len(str) > 0 {
-		f.out(str)
+
+	if hasContent {
+		f.put("\n")
 	}
 	f.lasth = height
 	if ln > 0 {
@@ -2795,8 +2744,7 @@ func (f *Scribe) MultiCell(
 					} else {
 						f.ws = 0
 					}
-					// f.outf("%g Tw", f.ws*f.k)
-					f.putF64(f.ws*f.k, 3)
+					f.putF64(f.ws, 3)
 					f.put(" Tw\n")
 				}
 				f.CellFormat(width, height, string(srune[j:sep]), b, 2, alignStr, fill, 0, "")
@@ -3079,6 +3027,7 @@ func (f *Scribe) ImageTypeFromMime(mimeStr string) (tp string) {
 }
 
 func (f *Scribe) imageOut(
+	name string,
 	info *ImageInfoType,
 	x, y, w, h float32,
 	allowNegativeX, flow bool,
@@ -3135,17 +3084,18 @@ func (f *Scribe) imageOut(
 	}
 	// dbg("h %g", h)
 	// q 85.04 0 0 NaN 28.35 NaN cm /I2 Do Q
-	// f.outf("q %g 0 0 %g %g %g cm /I%s Do Q", w*f.k, h*f.k, x*f.k, (f.h-(y+h))*f.k, info.i)
 	const prec = -1
 	f.put("q ")
-	f.putF64(w*f.k, prec)
+	f.putF64(w, prec)
 	f.put(" 0 0 ")
-	f.putF64(h*f.k, prec)
+	f.putF64(h, prec)
 	f.put(" ")
-	f.putF64(x*f.k, prec)
+	f.putF64(x, prec)
 	f.put(" ")
-	f.putF64((f.h-(y+h))*f.k, prec)
-	f.put(" cm /I" + info.i + " Do Q\n")
+	f.putF64((f.h - (y + h)), prec)
+	f.put(" cm /I")
+	f.put(name)
+	f.put(" Do Q\n")
 	if link > 0 || len(linkStr) > 0 {
 		f.newLink(x, y, w, h, link, linkStr)
 	}
@@ -3222,6 +3172,7 @@ func (f *Scribe) ImageOptions(
 		return
 	}
 	f.imageOut(
+		imageNameStr,
 		info,
 		x,
 		y,
@@ -3315,9 +3266,10 @@ func (f *Scribe) RegisterImageOptionsReader(
 		return
 	}
 
-	if info.i, f.err = generateImageID(info); f.err != nil {
-		return
-	}
+	// if info.i, f.err = generateImageID(info); f.err != nil {
+	// 	return
+	// }
+	info.i = strconv.Itoa(len(f.images))
 	f.images[imgName] = info
 
 	return
@@ -3464,10 +3416,10 @@ func (f *Scribe) UseImportedTemplate(
 ) {
 	f.outf(
 		"q 0 J 1 w 0 j 0 G 0 g q %g 0 0 %g %g %g cm %s Do Q Q\n",
-		scaleX*f.k,
-		scaleY*f.k,
-		tX*f.k,
-		(tY+f.h)*f.k,
+		scaleX,
+		scaleY,
+		tX,
+		(tY + f.h),
 		tplName,
 	)
 }
@@ -3604,7 +3556,14 @@ func (f *Scribe) OutputFileAndClose(fileStr string) error {
 		return f.err
 	}
 
-	_ = f.Output(pdfFile)
+	writer := bufio.NewWriter(pdfFile)
+
+	_ = f.Output(writer)
+
+	err = writer.Flush()
+	if err != nil {
+		return fmt.Errorf("could not close output file: %w", err)
+	}
 
 	err = pdfFile.Close()
 	if err != nil {
@@ -3622,9 +3581,7 @@ func (f *Scribe) Output(w io.Writer) error {
 	if f.err != nil {
 		return f.err
 	}
-	// dbg("Output")
 	err := f.Close(w)
-	// _, err := f.buffer.WriteTo(w)
 	if err != nil {
 		f.err = err
 	}
@@ -3643,6 +3600,7 @@ func (f *Scribe) beginpage(orientationStr string, size PageSize) {
 		f.pageBoxes[f.page][box] = pb
 	}
 	f.pages = append(f.pages, bytes.NewBuffer(make([]byte, 0, 16*1024)))
+	// f.pages = append(f.pages, bytes.NewBuffer(make([]byte, 0)))
 	f.pageLinks = append(f.pageLinks, make([]linkType, 0))
 	f.pageAttachments = append(f.pageAttachments, []annotationAttach{})
 	f.state = 2
@@ -3702,6 +3660,18 @@ func (f *Scribe) textstring(s string) string {
 	return "(" + f.escape(s) + ")"
 }
 
+func (f *Scribe) putTextString(s string) {
+	if f.protect.encrypted {
+		b := []byte(s)
+		f.protect.rc4(uint32(f.n), &b)
+		s = string(b)
+	}
+
+	f.put("(")
+	f.put(s)
+	f.put(")")
+}
+
 func blankCount(str string) (count int) {
 	l := len(str)
 	for j := 0; j < l; j++ {
@@ -3729,8 +3699,8 @@ func (f *Scribe) dounderline(x, y float32, txt string) string {
 	up := font.UnderlinePos
 	ut := font.UnderlineSize * f.userUnderlineThickness
 	w := f.GetStringWidth(txt) + f.ws*float32(blankCount(txt))
-	return sprintf("%g %g %g %g re f", x*f.k,
-		(f.h-(y-up/1000*f.fontSize))*f.k, w*f.k, -ut/1000*f.fontSizePt)
+	return sprintf("%g %g %g %g re f", x,
+		(f.h - (y - up/1000*f.fontSize)), w, -ut/1000*f.fontSizePt)
 }
 
 func (f *Scribe) dostrikeout(x, y float32, txt string) string {
@@ -3738,8 +3708,8 @@ func (f *Scribe) dostrikeout(x, y float32, txt string) string {
 	up := font.StrikeoutPos
 	ut := font.StrikeoutSize
 	w := f.GetStringWidth(txt) + f.ws*float32(blankCount(txt))
-	return sprintf("%g %g %g %g re f", x*f.k,
-		(f.h-(y-up/1000*f.fontSize))*f.k, w*f.k, -ut/1000*f.fontSizePt)
+	return sprintf("%g %g %g %g re f", x,
+		(f.h - (y - up/1000*f.fontSize)), w, -ut/1000*f.fontSizePt)
 }
 
 func (f *Scribe) newImageInfo() *ImageInfoType {
@@ -3790,23 +3760,17 @@ func (f *Scribe) parsejpg(r io.Reader) (info *ImageInfoType) {
 
 // parsepng extracts info from a PNG data
 func (f *Scribe) parsepng(r io.Reader, readdpi bool) (info *ImageInfoType) {
-	buf, err := newRBuffer(r)
-	if err != nil {
-		f.err = err
-		return
-	}
-	return f.parsepngstream(buf, readdpi)
+	buf := rbuffer{src: r}
+	return f.parsepngstream(&buf, readdpi)
 }
 
 // parsegif extracts info from a GIF data (via PNG conversion)
 func (f *Scribe) parsegif(r io.Reader) (info *ImageInfoType) {
-	data, err := newRBuffer(r)
-	if err != nil {
-		f.err = err
-		return
-	}
+	data := rbuffer{src: r}
+
 	var img image.Image
-	img, err = gif.Decode(data)
+	var err error
+	img, err = gif.Decode(&data)
 	if err != nil {
 		f.err = err
 		return
@@ -3817,7 +3781,8 @@ func (f *Scribe) parsegif(r io.Reader) (info *ImageInfoType) {
 		f.err = err
 		return
 	}
-	return f.parsepngstream(&rbuffer{p: pngBuf.Bytes()}, false)
+
+	return f.parsepng(pngBuf, false)
 }
 
 func (f *Scribe) print(bytes []byte) {
@@ -3828,6 +3793,16 @@ func (f *Scribe) print(bytes []byte) {
 	}
 
 	f.bytesWritten += uint32(n)
+}
+
+func (f *Scribe) printByte(b byte) {
+	_, err := f.writer.Write([]byte{b})
+	if err != nil {
+		f.err = err
+		return
+	}
+
+	f.bytesWritten += 1
 }
 
 func (f *Scribe) printCopy(reader io.Reader) {
@@ -3860,8 +3835,8 @@ func (f *Scribe) printf(format string, args ...any) {
 	f.bytesWritten += uint32(n)
 }
 
-func (f *Scribe) println(arg any) {
-	n, err := fmt.Fprintln(f.writer, arg)
+func (f *Scribe) println(args any) {
+	n, err := fmt.Fprintln(f.writer, args)
 	if err != nil {
 		f.err = err
 		return
@@ -3890,11 +3865,11 @@ func (f *Scribe) newobj() {
 		f.offsets = append(f.offsets, 0)
 	}
 	f.offsets[f.n] = f.bytesWritten
-	f.outf("%d 0 obj", f.n)
+	f.put(strconv.Itoa(int(f.n)))
+	f.out(" 0 obj")
 }
 
 func (f *Scribe) putstream(b []byte) {
-	// dbg("putstream")
 	if f.protect.encrypted {
 		f.protect.rc4(uint32(f.n), &b)
 	}
@@ -3905,40 +3880,105 @@ func (f *Scribe) putstream(b []byte) {
 
 // out; Add a line to the document
 func (f *Scribe) out(s string) {
-	if f.state == 2 {
+	switch f.state {
+	case 2:
 		must(f.pages[f.page].WriteString(s))
-		must(f.pages[f.page].WriteString("\n"))
-	} else {
+		must1(f.pages[f.page].WriteByte('\n'))
+	case 4:
+		must(f.xobjects[f.xobjIndex].buf.WriteString(s))
+		must1(f.xobjects[f.xobjIndex].buf.WriteByte('\n'))
+	default:
 		f.println(s)
 	}
 }
 
 func (f *Scribe) outBytes(bytes []byte) {
-	if f.state == 2 {
+	switch f.state {
+	case 2:
 		must(f.pages[f.page].Write(bytes))
-		must(f.pages[f.page].WriteString("\n"))
-	} else {
+		must1(f.pages[f.page].WriteByte('\n'))
+	case 4:
+		must(f.xobjects[f.xobjIndex].buf.Write(bytes))
+		must1(f.xobjects[f.xobjIndex].buf.WriteByte('\n'))
+	default:
 		f.print(bytes)
-		f.print([]byte{'\n'})
+		f.printByte('\n')
 	}
 }
 
 func (f *Scribe) put(s string) {
-	if f.state == 2 {
-		f.pages[f.page].WriteString(s)
-	} else {
+	switch f.state {
+	case 2:
+		must(f.pages[f.page].WriteString(s))
+	case 4:
+		must(f.xobjects[f.xobjIndex].buf.WriteString(s))
+	default:
 		f.printStr(s)
+	}
+}
+
+func (f *Scribe) putByte(b byte) {
+	switch f.state {
+	case 2:
+		f.err = f.pages[f.page].WriteByte(b)
+	case 4:
+		f.err = f.xobjects[f.xobjIndex].buf.WriteByte(b)
+	default:
+		f.printByte(b)
+	}
+}
+
+func (f *Scribe) putBytes(b []byte) {
+	switch f.state {
+	case 2:
+		must(f.pages[f.page].Write(b))
+	case 4:
+		must(f.xobjects[f.xobjIndex].buf.Write(b))
+	default:
+		f.print(b)
+	}
+}
+
+func (f *Scribe) putUtf16(s string) {
+	f.BufferGrow(2*len(s) + 2)
+
+	buf := [2]byte{}
+	for _, char := range s {
+		switch char {
+		case '\\', '(', ')', '\r':
+			binary.BigEndian.PutUint16(buf[:], uint16('\\'))
+			f.putBytes(buf[:])
+			f.putByte(uint8(char))
+		default:
+			binary.BigEndian.PutUint16(buf[:], uint16(char))
+			f.putBytes(buf[:])
+		}
 	}
 }
 
 // outbuf adds a buffered line to the document
 func (f *Scribe) outbuf(r io.Reader) {
-	if f.state == 2 {
+	switch f.state {
+	case 2:
 		must64(f.pages[f.page].ReadFrom(r))
-		must(f.pages[f.page].WriteString("\n"))
-	} else {
+		must1(f.pages[f.page].WriteByte('\n'))
+	case 4:
+		must64(f.xobjects[f.xobjIndex].buf.ReadFrom(r))
+		must1(f.xobjects[f.xobjIndex].buf.WriteByte('\n'))
+	default:
 		f.printCopy(r)
 		f.print([]byte{'\n'})
+	}
+}
+
+func (f *Scribe) BufferGrow(capAdditional int) {
+	switch f.state {
+	case 2:
+		f.pages[f.page].Grow(capAdditional)
+	case 4:
+		f.xobjects[f.xobjIndex].buf.Grow(capAdditional)
+	default:
+		// no-op
 	}
 }
 
@@ -3960,10 +4000,14 @@ func (f *Scribe) RawWriteBuf(r io.Reader) {
 
 // outf adds a formatted line to the document
 func (f *Scribe) outf(fmtStr string, args ...interface{}) {
-	if f.state == 2 {
+	switch f.state {
+	case 2:
 		must(f.pages[f.page].WriteString(sprintf(fmtStr, args...)))
 		must(f.pages[f.page].WriteString("\n"))
-	} else {
+	case 4:
+		must(f.xobjects[f.xobjIndex].buf.WriteString(sprintf(fmtStr, args...)))
+		must(f.xobjects[f.xobjIndex].buf.WriteString("\n"))
+	default:
 		f.printlnF(fmtStr, args...)
 	}
 }
@@ -4069,7 +4113,7 @@ func (f *Scribe) SetJavascript(script string) {
 func (f *Scribe) RegisterAlias(alias, replacement string) {
 	// Note: map[string]string assignments embed literal escape ("\00") sequences
 	// into utf16 key and value strings. Consequently, subsequent search/replace
-	// operations will fail unexpectedly if utf8toutf16() conversions take place
+	// operations will fail unexpectedly if f.utf8toutf16() conversions take place
 	// here. Instead, conversions are deferred until the actual search/replace
 	// operation takes place when the PDF output is generated.
 	f.aliasMap[alias] = replacement
@@ -4079,8 +4123,8 @@ func (f *Scribe) replaceAliases() {
 	for mode := 0; mode < 2; mode++ {
 		for alias, replacement := range f.aliasMap {
 			if mode == 1 {
-				alias = utf8toutf16(alias, false)
-				replacement = utf8toutf16(replacement, false)
+				alias = f.utf8toutf16(alias, false)
+				replacement = f.utf8toutf16(replacement, false)
 			}
 			for n := 1; n <= f.page; n++ {
 				s := f.pages[n].String()
@@ -4120,10 +4164,24 @@ func (f *Scribe) putpages() {
 		f.out("/Parent 1 0 R")
 		pageSize, ok = f.pageSizes[n]
 		if ok {
-			f.outf("/MediaBox [0 0 %g %g]", pageSize.Wd, pageSize.Ht)
+			f.put("/MediaBox [0 0 ")
+			f.put(f.fmtF64(pageSize.Wd, -1))
+			f.put(" ")
+			f.put(f.fmtF64(pageSize.Ht, -1))
+			f.out("]")
 		}
 		for t, pb := range f.pageBoxes[n] {
-			f.outf("/%s [%g %g %g %g]", t, pb.X, pb.Y, pb.Wd, pb.Ht)
+			f.put("/")
+			f.put(t)
+			f.put(" [")
+			f.put(f.fmtF64(pb.X, -1))
+			f.put(" ")
+			f.put(f.fmtF64(pb.Y, -1))
+			f.put(" ")
+			f.put(f.fmtF64(pb.Wd, -1))
+			f.put(" ")
+			f.put(f.fmtF64(pb.Ht, -1))
+			f.out("]")
 		}
 		f.out("/Resources 2 0 R")
 		// Links
@@ -4154,7 +4212,7 @@ func (f *Scribe) putpages() {
 						h = hPt
 					}
 					// dbg("h [%g], l.y [%g] f.k [%g]\n", h, l.y, f.k)
-					annots.printf("/Dest [%d 0 R /XYZ 0 %g null]>>", 1+2*l.page, h-l.y*f.k)
+					annots.printf("/Dest [%d 0 R /XYZ 0 %g null]>>", 1+2*l.page, h-l.y)
 				}
 			}
 			f.putAttachmentAnnotationLinks(&annots, n)
@@ -4164,18 +4222,25 @@ func (f *Scribe) putpages() {
 		if f.pdfVersion > pdfVers1_3 {
 			f.out("/Group <</Type /Group /S /Transparency /CS /DeviceRGB>>")
 		}
-		f.outf("/Contents %d 0 R>>", f.n+1)
+		f.put("/Contents ")
+		f.put(strconv.Itoa(int(f.n) + 1))
+		f.out(" 0 R>>")
 		f.out("endobj")
+
 		// Page content
 		f.newobj()
 		if f.compress {
 			mem := xmem.compress(f.pages[n].Bytes())
 			data := mem.bytes()
-			f.outf("<</Filter /FlateDecode /Length %d>>", len(data))
+			f.put("<</Filter /FlateDecode /Length ")
+			f.put(strconv.Itoa(len(data)))
+			f.out(">>")
 			f.putstream(data)
 			mem.release()
 		} else {
-			f.outf("<</Length %d>>", f.pages[n].Len())
+			f.put("<</Length ")
+			f.put(strconv.Itoa(f.pages[n].Len()))
+			f.out(">>")
 			f.putstream(f.pages[n].Bytes())
 		}
 		f.out("endobj")
@@ -4191,8 +4256,14 @@ func (f *Scribe) putpages() {
 	}
 	kids.printf("]")
 	f.out(kids.String())
-	f.outf("/Count %d", nb)
-	f.outf("/MediaBox [0 0 %g %g]", wPt, hPt)
+	f.put("/Count ")
+	f.out(strconv.Itoa(nb))
+
+	f.put("/MediaBox [0 0 ")
+	f.put(f.fmtF64(wPt, -1))
+	f.put(" ")
+	f.put(f.fmtF64(hPt, -1))
+	f.out("]")
 	f.out(">>")
 	f.out("endobj")
 }
@@ -4228,10 +4299,9 @@ func (f *Scribe) putfonts() {
 	for _, diff := range f.diffs {
 		// Encodings
 		f.newobj()
-		f.outf(
-			"<</Type /Encoding /BaseEncoding /WinAnsiEncoding /Differences [%s]>>",
-			diff,
-		)
+		f.put("<</Type /Encoding /BaseEncoding /WinAnsiEncoding /Differences [")
+		f.put(diff)
+		f.out("]>>")
 		f.out("endobj")
 	}
 	{
@@ -4379,9 +4449,12 @@ func (f *Scribe) putfonts() {
 				mem = xmem.compress(utf8FontStream)
 				compressedFontStream := mem.bytes()
 				f.newobj()
-				f.out("<</Length " + strconv.Itoa(len(compressedFontStream)))
+				f.put("<</Length ")
+				f.out(strconv.Itoa(len(compressedFontStream)))
+
 				f.out("/Filter /FlateDecode")
-				f.out("/Length1 " + strconv.Itoa(utf8FontSize))
+				f.put("/Length1 ")
+				f.out(strconv.Itoa(utf8FontSize))
 				f.out(">>")
 				f.putstream(compressedFontStream)
 				f.out("endobj")
@@ -4408,25 +4481,8 @@ func (f *Scribe) putimages() {
 		slices.Sort(keyList)
 	}
 
-	// Maintain a list of inserted image SHA-1 hashes, with their
-	// corresponding object ID number.
-	insertedImages := map[string]uint32{}
-
 	for _, key = range keyList {
-		image := f.images[key]
-
-		// Check if this image has already been inserted using it's SHA-1 hash.
-		insertedImageObjN, isFound := insertedImages[image.i]
-
-		// If found, skip inserting the image as a new object, and
-		// use the object ID from the insertedImages map.
-		// If not, insert the image into the PDF and store the object ID.
-		if isFound {
-			image.n = insertedImageObjN
-		} else {
-			f.putimage(image)
-			insertedImages[image.i] = image.n
-		}
+		f.putimage(f.images[key])
 	}
 }
 
@@ -4435,38 +4491,52 @@ func (f *Scribe) putimage(info *ImageInfoType) {
 	info.n = f.n
 	f.out("<</Type /XObject")
 	f.out("/Subtype /Image")
-	f.outf("/Width %d", int(info.w))
-	f.outf("/Height %d", int(info.h))
+	f.put("/Width ")
+	f.out(strconv.Itoa(int(info.w)))
+	f.put("/Height ")
+	f.out(strconv.Itoa(int(info.h)))
 	if info.cs == "Indexed" {
-		f.outf(
-			"/ColorSpace [/Indexed /DeviceRGB %d %d 0 R]",
-			len(info.pal)/3-1,
-			f.n+1,
-		)
+		f.put("/ColorSpace [/Indexed /DeviceRGB")
+		f.put(strconv.Itoa(len(info.pal)/3 - 1))
+		f.put(strconv.Itoa(int(f.n + 1)))
+		f.out("0 R]")
 	} else {
-		f.outf("/ColorSpace /%s", info.cs)
+		f.put("/ColorSpace /")
+		f.out(info.cs)
 		if info.cs == "DeviceCMYK" {
 			f.out("/Decode [1 0 1 0 1 0 1 0]")
 		}
 	}
-	f.outf("/BitsPerComponent %d", info.bpc)
+	f.put("/BitsPerComponent ")
+	f.out(strconv.Itoa(int(info.bpc)))
 	if len(info.f) > 0 {
-		f.outf("/Filter /%s", info.f)
+		f.put("/Filter /")
+		f.out(info.f)
 	}
 	if len(info.dp) > 0 {
-		f.outf("/DecodeParms <<%s>>", info.dp)
+		f.put("/DecodeParms <<")
+		f.put(info.dp)
+		f.out(">>")
 	}
 	if len(info.trns) > 0 {
-		trns := newFmtBuffer(uint32(len(info.trns)) * 16)
+		f.put("/Mask [")
 		for _, v := range info.trns {
-			trns.printf("%d %d ", v, v)
+			vStr := strconv.Itoa(v)
+			f.put(vStr)
+			f.put(" ")
+			f.put(vStr)
+			f.put(" ")
 		}
-		f.outf("/Mask [%s]", trns.String())
+		f.out("]")
 	}
 	if info.smask != nil {
-		f.outf("/SMask %d 0 R", f.n+1)
+		f.put("/SMask ")
+		f.put(strconv.Itoa(int(f.n + 1)))
+		f.out(" 0 R")
 	}
-	f.outf("/Length %d>>", len(info.data))
+	f.put("/Length ")
+	f.put(strconv.Itoa(len(info.data)))
+	f.out(">>")
 	f.putstream(info.data)
 	f.out("endobj")
 	// 	Soft mask
@@ -4492,11 +4562,15 @@ func (f *Scribe) putimage(info *ImageInfoType) {
 		if f.compress {
 			mem := xmem.compress(info.pal)
 			pal := mem.bytes()
-			f.outf("<</Filter /FlateDecode /Length %d>>", len(pal))
+			f.put("<</Filter /FlateDecode /Length ")
+			f.put(strconv.Itoa(len(pal)))
+			f.out(">>")
 			f.putstream(pal)
 			mem.release()
 		} else {
-			f.outf("<</Length %d>>", len(info.pal))
+			f.put("<</Length ")
+			f.put(strconv.Itoa(len(info.pal)))
+			f.out(">>")
 			f.putstream(info.pal)
 		}
 		f.out("endobj")
@@ -4505,7 +4579,6 @@ func (f *Scribe) putimage(info *ImageInfoType) {
 
 func (f *Scribe) putxobjectdict() {
 	{
-		var image *ImageInfoType
 		var key string
 		i := 0
 		keyList := make([]string, len(f.images))
@@ -4517,8 +4590,11 @@ func (f *Scribe) putxobjectdict() {
 			slices.Sort(keyList)
 		}
 		for _, key = range keyList {
-			image = f.images[key]
-			f.outf("/I%s %d 0 R", image.i, image.n)
+			f.put("/I")
+			f.put(key)
+			f.put(" ")
+			f.put(strconv.Itoa(int(f.images[key].n)))
+			f.out(" 0 R")
 		}
 	}
 	{
@@ -4528,12 +4604,26 @@ func (f *Scribe) putxobjectdict() {
 		keyList = templateKeyList(f.templates, f.catalogSort)
 		for _, key = range keyList {
 			tpl = f.templates[key]
-			// for _, tpl := range f.templates {
 			id := tpl.ID()
 			if objID, ok := f.templateObjects[id]; ok {
-				f.outf("/TPL%s %d 0 R", id, objID)
+				f.put("/TPL")
+				f.put(id)
+				f.put(" ")
+				f.put(strconv.Itoa(int(objID)))
+				f.out(" 0 R")
 			}
 		}
+	}
+	for i := range f.xobjects {
+		if !f.xobjectsUsed[i] {
+			continue
+		}
+
+		f.put("/TPL")
+		f.put(f.xobjects[i].name)
+		f.put(" ")
+		f.put(strconv.Itoa(int(f.xobjects[i].id)))
+		f.out(" 0 R")
 	}
 	{
 		for tplName, objID := range f.importedTplObjs {
@@ -4551,7 +4641,11 @@ func (f *Scribe) putresourcedict() {
 			continue
 		}
 
-		f.outf("/F%d %d 0 R", id, f.fontObjIds[id])
+		f.put("/F")
+		f.put(strconv.Itoa(id))
+		f.put(" ")
+		f.put(strconv.Itoa(int(f.fontObjIds[id])))
+		f.out(" 0 R")
 	}
 	f.out(">>")
 	f.out("/XObject <<")
@@ -4665,6 +4759,7 @@ func (f *Scribe) putresources() {
 		return
 	}
 	f.putimages()
+	f.putXobjects()
 	f.putTemplates()
 	f.putImportedTemplates() // gofpdi
 	// 	Resource dictionary
@@ -4700,30 +4795,45 @@ func timeOrNow(tm time.Time) time.Time {
 
 func (f *Scribe) putinfo() {
 	if len(f.producer) > 0 {
-		f.outf("/Producer %s", f.textstring(f.producer))
+		f.put("/Producer ")
+		f.putTextString(f.producer)
+		f.putByte('\n')
 	}
 	if len(f.title) > 0 {
-		f.outf("/Title %s", f.textstring(f.title))
+		f.put("/Title ")
+		f.putTextString(f.title)
+		f.putByte('\n')
 	}
 	if len(f.subject) > 0 {
-		f.outf("/Subject %s", f.textstring(f.subject))
+		f.put("/Subject ")
+		f.putTextString(f.subject)
+		f.putByte('\n')
 	}
 	if len(f.author) > 0 {
-		f.outf("/Author %s", f.textstring(f.author))
+		f.put("/Author ")
+		f.putTextString(f.author)
+		f.putByte('\n')
 	}
 	if len(f.keywords) > 0 {
-		f.outf("/Keywords %s", f.textstring(f.keywords))
+		f.put("/Keywords ")
+		f.putTextString(f.keywords)
+		f.putByte('\n')
 	}
 	if len(f.creator) > 0 {
-		f.outf("/Creator %s", f.textstring(f.creator))
+		f.put("/Creator ")
+		f.putTextString(f.creator)
+		f.putByte('\n')
 	}
+
 	creation := timeOrNow(f.creationDate)
-	f.outf(
-		"/CreationDate %s",
-		f.textstring("D:"+creation.Format("20060102150405")),
-	)
+	f.put("/CreationDate ")
+	f.putTextString("D:" + creation.Format("20060102150405"))
+	f.putByte('\n')
+
 	mod := timeOrNow(f.modDate)
-	f.outf("/ModDate %s", f.textstring("D:"+mod.Format("20060102150405")))
+	f.put("/ModDate ")
+	f.putTextString("D:" + mod.Format("20060102150405"))
+	f.putByte('\n')
 }
 
 func (f *Scribe) putcatalog() {
@@ -4849,7 +4959,7 @@ func (f *Scribe) putbookmarks() {
 			if o.last > 0 {
 				f.outf("/Last %d 0 R", n+uint32(o.last))
 			}
-			f.outf("/Dest [%d 0 R /XYZ 0 %g null]", 1+2*o.p, (f.h-o.y)*f.k)
+			f.outf("/Dest [%d 0 R /XYZ 0 %g null]", 1+2*o.p, (f.h - o.y))
 			f.out("/Count 0>>")
 			f.out("endobj")
 		}
@@ -4978,12 +5088,11 @@ func (f *Scribe) MoveTo(x, y float32) {
 //
 // The MoveTo() example demonstrates this method.
 func (f *Scribe) LineTo(x, y float32) {
-	// f.outf("%g %g l", x*f.k, (f.h-y)*f.k)
 	const prec = -1
-	f.putF64(x*f.k, prec)
+	f.putF64(x, prec)
 	f.put(" ")
 
-	f.putF64((f.h-y)*f.k, prec)
+	f.putF64((f.h - y), prec)
 	f.put(" l\n")
 
 	f.x, f.y = x, y
@@ -4998,15 +5107,14 @@ func (f *Scribe) LineTo(x, y float32) {
 //
 // The MoveTo() example demonstrates this method.
 func (f *Scribe) CurveTo(cx, cy, x, y float32) {
-	// f.outf("%g %g %g %g v", cx*f.k, (f.h-cy)*f.k, x*f.k, (f.h-y)*f.k)
 	const prec = -1
-	f.putF64(cx*f.k, prec)
+	f.putF64(cx, prec)
 	f.put(" ")
-	f.putF64((f.h-cy)*f.k, prec)
+	f.putF64((f.h - cy), prec)
 	f.put(" ")
-	f.putF64(x*f.k, prec)
+	f.putF64(x, prec)
 	f.put(" ")
-	f.putF64((f.h-y)*f.k, prec)
+	f.putF64((f.h - y), prec)
 	f.put(" v\n")
 	f.x, f.y = x, y
 }

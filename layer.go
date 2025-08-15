@@ -92,7 +92,7 @@ func (f *Scribe) layerPutLayers() {
 	for j, l := range f.layer.list {
 		f.newobj()
 		f.layer.list[j].objNum = f.n
-		f.outf("<</Type /OCG /Name %s>>", f.textstring(utf8toutf16(l.name)))
+		f.outf("<</Type /OCG /Name %s>>", f.textstring(f.utf8toutf16(l.name)))
 		f.out("endobj")
 	}
 }

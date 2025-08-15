@@ -65,9 +65,9 @@ func (f *Scribe) embed(a *Attachment) {
 	streamID := f.n
 	f.newobj()
 	f.outf("<< /Type /Filespec /F () /UF %s /EF << /F %d 0 R >> /Desc %s\n>>",
-		f.textstring(utf8toutf16(a.Filename)),
+		f.textstring(f.utf8toutf16(a.Filename)),
 		streamID,
-		f.textstring(utf8toutf16(a.Description)))
+		f.textstring(f.utf8toutf16(a.Description)))
 	f.out("endobj")
 	a.objectNumber = f.n
 	f.state = oldState
@@ -171,8 +171,8 @@ func (f *Scribe) putAttachmentAnnotationLinks(out *fmtBuffer, page int) {
 			x2,
 			y2,
 		)
-		out.printf("/Contents %s ", f.textstring(utf8toutf16(an.Description)))
-		out.printf("/T %s ", f.textstring(utf8toutf16(an.Filename)))
+		out.printf("/Contents %s ", f.textstring(f.utf8toutf16(an.Description)))
+		out.printf("/T %s ", f.textstring(f.utf8toutf16(an.Filename)))
 		out.printf("/AP << /N %s>>", as)
 		out.printf("/FS %d 0 R >>\n", an.objectNumber)
 	}

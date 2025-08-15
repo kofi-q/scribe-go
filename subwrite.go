@@ -16,13 +16,19 @@ package scribe
 // precedence over linkStr.
 //
 // The SubWrite example demonstrates this method.
-func (f *Scribe) SubWrite(ht float32, str string, subFontSize, subOffset float32, link int, linkStr string) {
+func (f *Scribe) SubWrite(
+	ht float32,
+	str string,
+	subFontSize, subOffset float32,
+	link int,
+	linkStr string,
+) {
 	if f.err != nil {
 		return
 	}
 	// resize font
 	subFontSizeOld := f.fontSizePt
-	f.SetFontSize(subFontSize)
+	f.SetFont(f.currentFont, f.fontStyle, subFontSize)
 	// reposition y
 	subOffset = (((subFontSize - subFontSizeOld) / f.k) * 0.3) + (subOffset / f.k)
 	subX := f.x
@@ -35,5 +41,5 @@ func (f *Scribe) SubWrite(ht float32, str string, subFontSize, subOffset float32
 	subY = f.y
 	f.SetXY(subX, subY+subOffset)
 	// restore font size
-	f.SetFontSize(subFontSizeOld)
+	f.SetFont(f.currentFont, f.fontStyle, subFontSizeOld)
 }

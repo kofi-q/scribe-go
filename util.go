@@ -23,12 +23,20 @@ package scribe
 import (
 	"bufio"
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
+
+func must1(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
 
 func must(n int, err error) int {
 	if err != nil {
@@ -50,48 +58,33 @@ func sprintf(fmtStr string, args ...interface{}) string {
 	return fmt.Sprintf(fmtStr, args...)
 }
 
+func (f *Scribe) Utf8toutf16(s string, withBOM ...bool) string {
+	return f.utf8toutf16(s, withBOM...)
+}
+
 // utf8toutf16 converts UTF-8 to UTF-16BE; from http://www.fpdf.org/
-func utf8toutf16(s string, withBOM ...bool) string {
+func (f *Scribe) utf8toutf16(s string, withBOM ...bool) string {
 	bom := true
 	if len(withBOM) > 0 {
 		bom = withBOM[0]
 	}
-	res := make([]byte, 0, 8)
-	if bom {
-		res = append(res, 0xFE, 0xFF)
-	}
-	nb := len(s)
-	i := 0
-	for i < nb {
-		c1 := byte(s[i])
-		i++
-		switch {
-		case c1 >= 224:
-			// [FIXME] We go out of bounds here for some Chinese text - not
-			// sure why yet.
-			if i+2 > nb {
-				continue
-			}
 
-			// 3-byte character
-			c2 := byte(s[i])
-			i++
-			c3 := byte(s[i])
-			i++
-			res = append(res, ((c1&0x0F)<<4)+((c2&0x3C)>>2),
-				((c2&0x03)<<6)+(c3&0x3F))
-		case c1 >= 192:
-			// 2-byte character
-			c2 := byte(s[i])
-			i++
-			res = append(res, ((c1 & 0x1C) >> 2),
-				((c1&0x03)<<6)+(c2&0x3F))
+	f.fmt.buf = slices.Grow(f.fmt.buf[:0], 2*len(s)+2)
+	if bom {
+		f.fmt.buf = append(f.fmt.buf, 0xFE, 0xFF)
+	}
+
+	for _, char := range s {
+		switch char {
+		case '\\', '(', ')', '\r':
+			f.fmt.buf = binary.BigEndian.AppendUint16(f.fmt.buf, uint16('\\'))
+			f.fmt.buf = append(f.fmt.buf, uint8(char))
 		default:
-			// Single-byte character
-			res = append(res, 0, c1)
+			f.fmt.buf = binary.BigEndian.AppendUint16(f.fmt.buf, uint16(char))
 		}
 	}
-	return string(res)
+
+	return string(f.fmt.buf)
 }
 
 // intIf returns a if cnd is true, otherwise b

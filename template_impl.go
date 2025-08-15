@@ -40,7 +40,7 @@ func newTpl(
 	copyFrom *Scribe,
 ) Template {
 	doc := scribeNew(orientationStr, unitStr, size, fontSet)
-	tpl := Tpl{*doc}
+	tpl := Tpl{doc}
 	if copyFrom != nil {
 		tpl.loadParamsFromFpdf(copyFrom)
 	}
@@ -296,7 +296,7 @@ func (t *FpdfTpl) GobDecode(buf []byte) error {
 // an Scribe, but cannot add more pages. Tpl is used directly only during the
 // limited time a template is writable.
 type Tpl struct {
-	Scribe
+	*Scribe
 }
 
 func (t *Tpl) loadParamsFromFpdf(f *Scribe) {
