@@ -1,6 +1,6 @@
 module github.com/kofi-q/scribe-go
 
-go 1.24.3
+go 1.25.0
 
 require (
 	github.com/bits-and-blooms/bitset v1.24.0

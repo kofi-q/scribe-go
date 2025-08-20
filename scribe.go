@@ -1702,20 +1702,19 @@ func (f *Scribe) ClipRoundedRectExt(
 // routine shared by RoundedRect() and ClipRoundedRect(), which add the
 // drawing operation
 func (f *Scribe) roundedRectPath(x, y, w, h, rTL, rTR, rBR, rBL float32) {
-	k := f.k
 	hp := f.h
 	var myArc float64 = (4.0 / 3.0) * (math.Sqrt2 - 1.0)
 	const prec = -1
 	f.put("q ")
-	f.putF64((x+rTL)*k, prec)
+	f.putF64((x + rTL), prec)
 	f.put(" ")
-	f.putF64((hp-y)*k, prec)
+	f.putF64((hp - y), prec)
 	f.put(" m\n")
 	xc := x + w - rTR
 	yc := y + rTR
-	f.putF64(xc*k, prec)
+	f.putF64(xc, prec)
 	f.put(" ")
-	f.putF64((hp-y)*k, prec)
+	f.putF64((hp - y), prec)
 	f.put(" l\n")
 	if rTR != 0 {
 		f.clipArc(
@@ -1729,9 +1728,9 @@ func (f *Scribe) roundedRectPath(x, y, w, h, rTL, rTR, rBR, rBL float32) {
 	}
 	xc = x + w - rBR
 	yc = y + h - rBR
-	f.putF64((x+w)*k, prec)
+	f.putF64((x + w), prec)
 	f.put(" ")
-	f.putF64((hp-yc)*k, prec)
+	f.putF64((hp - yc), prec)
 	f.put(" l\n")
 	if rBR != 0 {
 		f.clipArc(
@@ -1745,9 +1744,9 @@ func (f *Scribe) roundedRectPath(x, y, w, h, rTL, rTR, rBR, rBL float32) {
 	}
 	xc = x + rBL
 	yc = y + h - rBL
-	f.putF64(xc*k, prec)
+	f.putF64(xc, prec)
 	f.put(" ")
-	f.putF64((hp-(y+h))*k, prec)
+	f.putF64((hp - (y + h)), prec)
 	f.put(" l\n")
 	if rBL != 0 {
 		f.clipArc(
@@ -1761,9 +1760,9 @@ func (f *Scribe) roundedRectPath(x, y, w, h, rTL, rTR, rBR, rBL float32) {
 	}
 	xc = x + rTL
 	yc = y + rTL
-	f.putF64(x*k, prec)
+	f.putF64(x, prec)
 	f.put(" ")
-	f.putF64((hp-yc)*k, prec)
+	f.putF64((hp - yc), prec)
 	f.put(" l\n")
 	if rTL != 0 {
 		f.clipArc(
@@ -1790,82 +1789,81 @@ func (f *Scribe) ClipEllipse(x, y, rx, ry float32, outline bool) {
 	f.clipNest++
 	lx := (4.0 / 3.0) * rx * (math.Sqrt2 - 1)
 	ly := (4.0 / 3.0) * ry * (math.Sqrt2 - 1)
-	k := f.k
 	h := f.h
 	//	f.outf("q %g %g m %g %g %g %g %g %g c",
-	//		(x+rx)*k, (h-y)*k,
-	//		(x+rx)*k, (h-(y-ly))*k,
-	//		(x+lx)*k, (h-(y-ry))*k,
-	//		x*k, (h-(y-ry))*k)
+	//		(x+rx), (h-y),
+	//		(x+rx), (h-(y-ly)),
+	//		(x+lx), (h-(y-ry)),
+	//		x, (h-(y-ry)))
 	const prec = -1
 	f.put("q ")
-	f.putF64((x+rx)*k, prec)
+	f.putF64((x + rx), prec)
 	f.put(" ")
-	f.putF64((h-y)*k, prec)
+	f.putF64((h - y), prec)
 	f.put(" m ")
-	f.putF64((x+rx)*k, prec)
+	f.putF64((x + rx), prec)
 	f.put(" ")
-	f.putF64((h-(y-ly))*k, prec)
+	f.putF64((h - (y - ly)), prec)
 	f.put(" ")
-	f.putF64((x+lx)*k, prec)
+	f.putF64((x + lx), prec)
 	f.put(" ")
-	f.putF64((h-(y-ry))*k, prec)
+	f.putF64((h - (y - ry)), prec)
 	f.put(" ")
-	f.putF64(x*k, prec)
+	f.putF64(x, prec)
 	f.put(" ")
-	f.putF64((h-(y-ry))*k, prec)
+	f.putF64((h - (y - ry)), prec)
 	f.put(" c\n")
 
 	//	f.outf("%g %g %g %g %g %g c",
-	//		(x-lx)*k, (h-(y-ry))*k,
-	//		(x-rx)*k, (h-(y-ly))*k,
-	//		(x-rx)*k, (h-y)*k)
-	f.putF64((x-lx)*k, prec)
+	//		(x-lx), (h-(y-ry)),
+	//		(x-rx), (h-(y-ly)),
+	//		(x-rx), (h-y))
+	f.putF64((x - lx), prec)
 	f.put(" ")
-	f.putF64((h-(y-ry))*k, prec)
+	f.putF64((h - (y - ry)), prec)
 	f.put(" ")
-	f.putF64((x-rx)*k, prec)
+	f.putF64((x - rx), prec)
 	f.put(" ")
-	f.putF64((h-(y-ly))*k, prec)
+	f.putF64((h - (y - ly)), prec)
 	f.put(" ")
-	f.putF64((x-rx)*k, prec)
+	f.putF64((x - rx), prec)
 	f.put(" ")
-	f.putF64((h-y)*k, prec)
+	f.putF64((h - y), prec)
 	f.put(" c\n")
 
 	//	f.outf("%g %g %g %g %g %g c",
-	//		(x-rx)*k, (h-(y+ly))*k,
-	//		(x-lx)*k, (h-(y+ry))*k,
-	//		x*k, (h-(y+ry))*k)
-	f.putF64((x-rx)*k, prec)
+	//		(x-rx), (h-(y+ly)),
+	//		(x-lx), (h-(y+ry)),
+	//		x, (h-(y+ry)))
+	f.putF64((x - rx), prec)
 	f.put(" ")
-	f.putF64((h-(y+ly))*k, prec)
+	f.putF64((h - (y + ly)), prec)
 	f.put(" ")
-	f.putF64((x-lx)*k, prec)
+	f.putF64((x - lx), prec)
 	f.put(" ")
-	f.putF64((h-(y+ry))*k, prec)
+	f.putF64((h - (y + ry)), prec)
 	f.put(" ")
-	f.putF64(x*k, prec)
+	f.putF64(x, prec)
 	f.put(" ")
-	f.putF64((h-(y+ry))*k, prec)
+	f.putF64((h - (y + ry)), prec)
 	f.put(" c\n")
 
 	//	f.outf("%g %g %g %g %g %g c W %s",
-	//		(x+lx)*k, (h-(y+ry))*k,
-	//		(x+rx)*k, (h-(y+ly))*k,
-	//		(x+rx)*k, (h-y)*k,
+	//		(x+lx), (h-(y+ry)),
+	//		(x+rx), (h-(y+ly)),
+	//		(x+rx), (h-y),
 	//		strIf(outline, "S", "n"))
-	f.putF64((x+lx)*k, prec)
+	f.putF64((x + lx), prec)
 	f.put(" ")
-	f.putF64((h-(y+ry))*k, prec)
+	f.putF64((h - (y + ry)), prec)
 	f.put(" ")
-	f.putF64((x+rx)*k, prec)
+	f.putF64((x + rx), prec)
 	f.put(" ")
-	f.putF64((h-(y+ly))*k, prec)
+	f.putF64((h - (y + ly)), prec)
 	f.put(" ")
-	f.putF64((x+rx)*k, prec)
+	f.putF64((x + rx), prec)
 	f.put(" ")
-	f.putF64((h-y)*k, prec)
+	f.putF64((h - y), prec)
 	f.put(" c W " + strIf(outline, "S", "n") + "\n")
 }
 
@@ -1896,10 +1894,9 @@ func (f *Scribe) ClipPolygon(points []PointType, outline bool) {
 	f.clipNest++
 	var s fmtBuffer
 	h := f.h
-	k := f.k
 	s.printf("q ")
 	for j, pt := range points {
-		s.printf("%g %g %s ", pt.X*k, (h-pt.Y)*k, strIf(j == 0, "m", "l"))
+		s.printf("%g %g %s ", pt.X, (h - pt.Y), strIf(j == 0, "m", "l"))
 	}
 	s.printf("h W %s", strIf(outline, "S", "n"))
 	f.out(s.String())
@@ -2302,7 +2299,6 @@ func (f *Scribe) CellFormat(
 
 	font := f.font()
 
-	k := f.k
 	if f.y+height > f.pageBreakTrigger && !f.inHeader && !f.inFooter &&
 		f.acceptPageBreak() {
 		// Automatic page break
@@ -2319,7 +2315,7 @@ func (f *Scribe) CellFormat(
 		f.x = x
 		if ws > 0 {
 			f.ws = ws
-			f.putF64(ws*k, 3)
+			f.putF64(ws, 3)
 			f.put(" Tw\n")
 		}
 	}
@@ -2341,13 +2337,13 @@ func (f *Scribe) CellFormat(
 		} else {
 			op = "S"
 		}
-		f.put(f.fmtF64(f.x*k, -1))
+		f.put(f.fmtF64(f.x, -1))
 		f.put(" ")
-		f.put(f.fmtF64((f.h-f.y)*k, -1))
+		f.put(f.fmtF64((f.h - f.y), -1))
 		f.put(" ")
-		f.put(f.fmtF64(width*k, -1))
+		f.put(f.fmtF64(width, -1))
 		f.put(" ")
-		f.put(f.fmtF64(-height*k, -1))
+		f.put(f.fmtF64(-height, -1))
 		f.put(" re ")
 		f.put(op)
 		f.put(" ")
@@ -2357,10 +2353,10 @@ func (f *Scribe) CellFormat(
 
 		x := f.x
 		y := f.y
-		left := x * k
-		top := (f.h - y) * k
-		right := (x + width) * k
-		bottom := (f.h - (y + height)) * k
+		left := x
+		top := (f.h - y)
+		right := (x + width)
+		bottom := (f.h - (y + height))
 
 		if strings.Contains(borderStr, "L") {
 			f.Line(left, top, left, bottom)
@@ -2425,9 +2421,9 @@ func (f *Scribe) CellFormat(
 			}
 			strSize := strGlyphWidth
 			f.put("BT 0 Tw ")
-			f.put(f.fmtF64((f.x+dx)*k, -1))
+			f.put(f.fmtF64((f.x + dx), -1))
 			f.put(" ")
-			f.put(f.fmtF64((f.h-(f.y+.5*height+.3*f.fontSize))*k, -1))
+			f.put(f.fmtF64((f.h - (f.y + .5*height + .3*f.fontSize)), -1))
 			f.put(" Td [")
 
 			t := strings.Split(txtStr, " ")
@@ -2455,8 +2451,8 @@ func (f *Scribe) CellFormat(
 				f.usedRunes[f.currentFont].Set(uint(uni))
 			}
 
-			bt := (f.x + dx) * k
-			td := (f.h - (f.y + dy + .5*height + .3*f.fontSize)) * k
+			bt := (f.x + dx)
+			td := (f.h - (f.y + dy + .5*height + .3*f.fontSize))
 			f.put("BT ")
 			f.put(f.fmtF64(bt, -1))
 			f.put(" ")
