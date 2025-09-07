@@ -12,24 +12,34 @@ type xobject struct {
 	size SizeType
 
 	id uint32
+
+	compress bool
 }
 
 type XobjectId struct {
 	index uint32
 }
 
+type XobjectParams struct {
+	Name        string
+	Size        SizeType
+	BufSizeInit uint32
+	Compress    bool
+}
+
 func (f *Scribe) XobjectCreate(
-	name string,
-	size SizeType,
-	bufSizeInit uint32,
+	params XobjectParams,
 	fn func(*Tpl),
 ) XobjectId {
 	id := XobjectId{index: uint32(len(f.xobjects))}
 	f.xobjects = append(f.xobjects, xobject{
-		name: name,
-		size: size,
+		compress: params.Compress,
+		name:     params.Name,
+		size:     params.Size,
 	})
-	f.xobjects[id.index].buf = bytes.NewBuffer(make([]byte, 0, bufSizeInit))
+	f.xobjects[id.index].buf = bytes.NewBuffer(
+		make([]byte, 0, params.BufSizeInit),
+	)
 
 	f.xobjectsUsed = append(f.xobjectsUsed, false)
 
@@ -43,8 +53,8 @@ func (f *Scribe) XobjectCreate(
 
 	f.x = 0
 	f.y = 0
-	f.w = size.Wd
-	f.h = size.Ht
+	f.w = params.Size.Wd
+	f.h = params.Size.Ht
 
 	f.xobjIndex = id.index
 	fn(&Tpl{f})
@@ -118,7 +128,7 @@ func (f *Scribe) putXobjects() {
 		//  Write the template's byte stream
 		buffer := f.xobjects[i].buf.Bytes()
 		var mem *membuffer
-		if f.compress {
+		if f.xobjects[i].compress || f.compress {
 			mem = xmem.compress(buffer)
 			buffer = mem.bytes()
 		}
